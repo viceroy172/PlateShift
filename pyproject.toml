@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plateshift"
+version = "0.1.0"
+description = "Convert Bambu Studio / MakerWorld 3MF projects for other printers, offline."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+plateshift = "plateshift.cli:main"
+
+[project.gui-scripts]
+plateshift-gui = "plateshift.gui:main"
+
+[tool.setuptools]
+packages = ["plateshift"]
