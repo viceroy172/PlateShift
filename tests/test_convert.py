@@ -2,18 +2,21 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sys
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from make_project import bambu_settings, write_project  # noqa: E402
 from plateshift import paint  # noqa: E402
-from plateshift.convert import ConversionError, _plate_centre, _plate_columns, analyse, convert  # noqa: E402
+from plateshift.convert import (ConversionError, _drop_gcode_rels, _plate_centre,  # noqa: E402
+                                _plate_columns, analyse, convert, unique_output)
 from plateshift.printers import BY_KEY, Target  # noqa: E402
 from plateshift.profiles import ProfileLibrary, locate  # noqa: E402
 
@@ -68,6 +71,14 @@ def make_profiles(root: Path, bed: int = 256) -> Path:
     return root
 
 
+def _replace_entry(path: Path, name: str, data: bytes) -> None:
+    with zipfile.ZipFile(path) as z:
+        items = [(i, z.read(i.filename)) for i in z.infolist()]
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        for info, content in items:
+            z.writestr(info, data if info.filename == name else content)
+
+
 def read(path: Path, name: str) -> str:
     with zipfile.ZipFile(path) as z:
         return z.read(name).decode("utf-8")
@@ -76,6 +87,7 @@ def read(path: Path, name: str) -> str:
 class ConvertTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.lib = ProfileLibrary(make_profiles(self.tmp / "profiles"), "Testvendor")
 
     def convert(self, settings=None, plates=None, gcode=False, **kw):
@@ -331,6 +343,91 @@ class ConvertTests(unittest.TestCase):
         _, _, s = self.convert(bambu_settings(ensure_vertical_shell_thickness="something_new"))
         self.assertNotIn("ensure_vertical_shell_thickness", s)
 
+    # --- found in review ---------------------------------------------------
+
+    def test_new_toolhead_layout_picks_presets_for_its_colours(self):
+        # swapping PLA colour 1 and PETG colour 3 used to keep the old presets:
+        # PETG on a PLA preset and the other way round
+        src = write_project(self.tmp / "in.3mf", bambu_settings(), [[(128, 128)]])
+        plan = analyse(src, TARGET, self.lib)
+        before = dict(plan.presets)
+        report = convert(src, self.tmp / "out.3mf", TARGET, self.lib, merge=[3, 2, 1, 4], plan=plan)
+        by_head = {s.slot: (s.source_type, s.target) for s in report.slots}
+        self.assertEqual(by_head[1], ("PETG", "Generic PETG @T"))
+        self.assertEqual(by_head[3][0], "PLA")
+        self.assertIn("PLA", by_head[3][1])
+        self.assertEqual(plan.presets, before)  # the caller's plan is left alone
+
+    def test_relationships_keep_their_root_element(self):
+        rels = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+                ' <Relationship Target="/Metadata/plate_1.gcode" Id="rel-1" Type="g"/>\n'
+                ' <Relationship Target="/Metadata/pic.png" Id="rel-2" Type="p"/>\n'
+                '</Relationships>\n')
+        out = _drop_gcode_rels(rels)
+        root = ET.fromstring(out)
+        self.assertTrue(root.tag.endswith("Relationships"))
+        self.assertEqual([r.get("Id") for r in root], ["rel-2"])
+        self.assertIsNone(_drop_gcode_rels(rels.replace("pic.png", "plate_2.gcode")))
+
+    def test_damaged_files_give_a_plain_error(self):
+        cases = {
+            "settings are a list": None,
+            "unreadable bed": bambu_settings(printable_area=["0x0", "abc"]),
+        }
+        for label, settings in cases.items():
+            with self.subTest(label):
+                src = write_project(self.tmp / "bad.3mf", settings or {}, [[(128, 128)]])
+                if settings is None:
+                    _replace_entry(src, "Metadata/project_settings.config", b"[1, 2, 3]")
+                with self.assertRaises(ConversionError):
+                    convert(src, self.tmp / "bad-out.3mf", TARGET, self.lib)
+
+    def test_damaged_parts_inside_a_project_give_a_plain_error(self):
+        src = write_project(self.tmp / "m.3mf", bambu_settings(), [[(128, 128)]])
+        for entry, data in [("Metadata/model_settings.config", b"<config><plate>"),
+                            ("3D/3dmodel.model", b"\xff\xfe not utf-8 \x80"),
+                            ("3D/3dmodel.model", b'<model><triangle paint_color="' + b"F" * 3000 + b'"/></model>')]:
+            with self.subTest(entry):
+                broken = self.tmp / "broken.3mf"
+                broken.write_bytes(src.read_bytes())
+                _replace_entry(broken, entry, data)
+                with self.assertRaises(ConversionError):
+                    convert(broken, self.tmp / "broken-out.3mf", TARGET, self.lib)
+
+    def test_odd_but_harmless_values_are_tolerated(self):
+        # a text filament list, a "nan" support filament, a non-numeric plate id
+        settings = bambu_settings(filament_settings_id="Bambu PLA Basic @BBL X1C", filament_type="PLA",
+                                  filament_colour="#000000", support_filament="nan")
+        src = write_project(self.tmp / "odd.3mf", settings, [[(128, 128)]])
+        ms = read(src, "Metadata/model_settings.config").replace('value="1"/>', 'value="one"/>', 1)
+        _replace_entry(src, "Metadata/model_settings.config", ms.encode())
+        report = convert(src, self.tmp / "odd-out.3mf", TARGET, self.lib)
+        self.assertEqual(len(report.slots), 1)
+
+    def test_lists_that_only_look_per_filament_are_not_shuffled(self):
+        # a 4-point bed exclusion area in a 4-filament project isn't per filament
+        area = ["0x0", "18x0", "18x28", "0x28"]
+        _, _, s = self.convert(bambu_settings(bed_exclude_area=area), merge=[1, 1, 2, 2])
+        self.assertNotEqual(s.get("bed_exclude_area"), ["0x0", "18x28"])
+        self.assertIn(s.get("bed_exclude_area"), (None, area))
+
+    def test_unique_output_never_reuses_a_name(self):
+        first = self.tmp / "x - T.3mf"
+        self.assertEqual(unique_output(first), first)
+        first.write_text("taken")
+        second = unique_output(first)
+        self.assertEqual(second.name, "x - T (2).3mf")
+        second.write_text("taken")
+        self.assertEqual(unique_output(first).name, "x - T (3).3mf")
+
+    def test_report_text(self):
+        report = convert(self.six_colour_project(), self.tmp / "r.3mf", TARGET, self.lib)
+        text = "\n".join(report.lines())
+        self.assertIn("six.3mf -> r.3mf", text)
+        self.assertIn("Toolhead 1 #000000: colours 1 + 2 merged", text)
+        self.assertIn("Repainted", text)
+
     def test_plate_grid_matches_slicer(self):
         self.assertEqual([_plate_columns(n) for n in (1, 2, 3, 4, 5, 9, 10)], [1, 2, 2, 2, 3, 3, 4])
         # plate 3 of 4 is on the second row
@@ -348,6 +445,7 @@ class InstalledProfilesTest(unittest.TestCase):
         target, root = locate(target)
         lib = ProfileLibrary(root, "Flashforge")
         tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         src = write_project(tmp / "in.3mf", bambu_settings(), [[(128, 128)]])
         report = convert(src, tmp / "out.3mf", target, lib)
         s = json.loads(read(tmp / "out.3mf", "Metadata/project_settings.config"))

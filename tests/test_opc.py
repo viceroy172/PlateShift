@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import struct
 import sys
 import tempfile
@@ -91,6 +92,7 @@ def make_opc(path: Path, vendor: str, presets: dict) -> Path:
 class OpcTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     def test_values_come_back_like_json_profiles(self):
         path = make_opc(self.tmp / "Acme.opc", "Acme", {"machine": [("Acme X 0.4 nozzle", "", [
@@ -116,6 +118,12 @@ class OpcTests(unittest.TestCase):
         self.assertEqual(p["wipe"], ["1", "0"])
         self.assertEqual(p["gcode_flavor"], "klipper")
         self.assertEqual(p["z_hop_types"], ["Auto Lift", "Spiral Lift"])
+
+    def test_infinite_numbers_dont_crash(self):
+        path = make_opc(self.tmp / "Acme.opc", "Acme", {"machine": [("M", "", [
+            ("max_layer_height", 1, float("inf")), ("min_layer_height", 1, float("-inf"))])]})
+        p = opc.read(path)["machine"][0]
+        self.assertEqual((p["max_layer_height"], p["min_layer_height"]), ("inf", "-inf"))
 
     def test_damaged_files_are_refused(self):
         path = make_opc(self.tmp / "Acme.opc", "Acme", {"machine": [("M", "", [("layer_height", 1, 0.2)])]})

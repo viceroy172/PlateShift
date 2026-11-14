@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+MAX_DEPTH = 64
+
 
 def _bits(code: str) -> list[int]:
     out = []
@@ -40,11 +42,15 @@ def decode(code: str):
         pos += n
         return v
 
-    def node():
+    def node(depth=0):
+        # real painting is a handful of levels deep; a crafted file could nest
+        # thousands and exhaust the stack
+        if depth > MAX_DEPTH:
+            raise ValueError("painted colour data is nested implausibly deep")
         split = take(2)
         if split:
             special = take(2)
-            return (split, special, [node() for _ in range(split + 1)])
+            return (split, special, [node(depth + 1) for _ in range(split + 1)])
         state = take(2)
         if state == 3:
             while True:

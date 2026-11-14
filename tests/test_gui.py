@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-import os
+import shutil
 import sys
 import tempfile
 import time
@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     import tkinter as tk
     _root = tk.Tk()
+    _root.update_idletasks()
     _root.destroy()
     HAVE_TK = True
 except Exception:  # no tk, or no display (e.g. headless linux ci)
@@ -49,7 +50,10 @@ class WindowTests(unittest.TestCase):
         self.app.library = lambda target: (target, lib)
 
     def tearDown(self):
+        for pending in self.root.tk.call("after", "info"):
+            self.root.after_cancel(pending)
         self.root.destroy()
+        shutil.rmtree(self.tmp, ignore_errors=True)
         self.gui.TARGETS, self.gui._settings_file, self.gui.find_slicers = self.saved
 
     def wait(self, condition, timeout=20.0):
@@ -92,6 +96,72 @@ class WindowTests(unittest.TestCase):
         with zipfile.ZipFile(app.last_output) as z:
             s = json.loads(z.read("Metadata/project_settings.config"))
         self.assertEqual(len(s["filament_settings_id"]), 4)
+
+    def log(self) -> str:
+        return self.app.log.get("1.0", "end")
+
+    def test_an_unexpected_error_never_leaves_the_window_busy(self):
+        app = self.app
+        app.printer.set(FOUR.label)
+        real = self.gui.analyse
+        self.gui.analyse = lambda *a: (_ for _ in ()).throw(RuntimeError("boom"))
+        try:
+            app.handle_files([self.six_colours()])
+            self.wait(lambda: not app.busy)
+        finally:
+            self.gui.analyse = real
+        self.assertIn("unexpected problem (RuntimeError: boom)", self.log())
+
+        # in a batch, one file failing oddly doesn't stop the next
+        good = write_project(self.tmp / "good.3mf", bambu_settings(), [[(128, 128)]])
+        real_convert = self.gui.convert
+        calls = []
+
+        def flaky(source, *a, **k):
+            calls.append(source.name)
+            if source.name == "six.3mf":
+                raise RuntimeError("boom")
+            return real_convert(source, *a, **k)
+        self.gui.convert = flaky
+        try:
+            app.handle_files([self.six_colours(), good])
+            self.wait(lambda: not app.busy and len(calls) == 2 and "Done" in app.status.cget("text"))
+        finally:
+            self.gui.convert = real_convert
+        self.assertTrue((self.tmp / "good - Four.3mf").exists())
+        self.assertIn("1 converted, 1 not converted", app.status.cget("text"))
+
+    def test_existing_output_is_only_replaced_when_asked(self):
+        app = self.app
+        app.printer.set(FOUR.label)
+        src = write_project(self.tmp / "keep.3mf", bambu_settings(), [[(128, 128)]])
+        existing = self.tmp / "keep - Four.3mf"
+        existing.write_text("my edited project")
+        answers = iter([None, False])
+        real = self.gui.messagebox.askyesnocancel
+        self.gui.messagebox.askyesnocancel = lambda *a, **k: next(answers)
+        try:
+            app.handle_files([src])
+            self.wait(self.panel_ready)
+            app.convert_plan()                       # cancel: nothing happens, panel stays
+            self.assertIsNotNone(app.plan)
+            app.convert_plan()                       # no: keep both
+            self.wait(lambda: not app.busy and app.last_output is not None)
+        finally:
+            self.gui.messagebox.askyesnocancel = real
+        self.assertEqual(existing.read_text(), "my edited project")
+        self.assertEqual(app.last_output.name, "keep - Four (2).3mf")
+
+    def test_preset_warnings_show_in_the_panel(self):
+        # the test printer has no TPU preset, so PLA is used and the panel says so
+        app = self.app
+        app.printer.set(FOUR.label)
+        src = write_project(self.tmp / "tpu.3mf", bambu_settings(filament_type=["TPU", "PLA", "PLA", "PLA"]),
+                            [[(128, 128)]])
+        app.handle_files([src])
+        self.wait(self.panel_ready)
+        texts = [w.cget("text") for w in app.heads_frame.winfo_children() if w.winfo_class() == "TLabel"]
+        self.assertTrue(any("no TPU preset" in t for t in texts), texts)
 
 
 if __name__ == "__main__":

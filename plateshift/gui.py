@@ -9,10 +9,11 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import colorchooser, filedialog, ttk
+from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from . import dnd
-from .convert import ConversionError, analyse, convert, default_output, lead_colour, suggest_preset
+from .convert import (ConversionError, analyse, convert, default_output, lead_colour, suggest,
+                      unique_output)
 from .printers import TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
 from .slicers import Slicer, find_slicers, open_in, test_slicer
@@ -21,6 +22,7 @@ from .testslice import run as test_slice
 
 OK_COLOUR = "#1a7f37"
 FAIL_COLOUR = "#b42318"
+WARN_COLOUR = "#9a6700"
 MUTED = "#555555"
 DONT_OPEN = "Don't open"
 
@@ -46,6 +48,12 @@ def save_settings(settings: dict) -> None:
         path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     except OSError:
         pass
+
+
+def _explain(exc: Exception) -> str:
+    if isinstance(exc, (ConversionError, OSError)):
+        return str(exc)
+    return f"unexpected problem ({type(exc).__name__}: {exc}). Please report this with the file."
 
 
 def _display(profile: dict) -> str:
@@ -278,15 +286,15 @@ class App:
         self.set_status(f"Reading {source.name}…")
 
         def work():
+            result = (None, None, None)
             try:
                 located, lib = self.library(target)
-                plan = analyse(source, located, lib)
-            except (ConversionError, FileNotFoundError, OSError) as exc:
+                result = (source, located, analyse(source, located, lib))
+            except Exception as exc:  # anything at all: the window must never stay busy
                 self.write(f"✗ {source.name}: not converted", "fail")
-                self.write(f"  {exc}\n")
-                self.later(lambda: self.after_prepare(None, None, None))
-                return
-            self.later(lambda: self.after_prepare(source, located, plan))
+                self.write(f"  {_explain(exc)}\n")
+            finally:
+                self.later(lambda: self.after_prepare(*result))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -368,7 +376,9 @@ class App:
         ttk.Label(self.heads_frame, text="click a colour to change it", foreground=MUTED).grid(
             row=0, column=2, sticky="e")
         by_name = {v: k for k, v in self.preset_names.items()}
-        for row, t in enumerate(sorted(set(merge)), start=1):
+        row = 0
+        for t in sorted(set(merge)):
+            row += 1
             colour = self.head_colours.get(t, lead_colour(plan, merge, t))
             swatch = tk.Label(self.heads_frame, width=2, bg=colour, cursor="hand2",
                               relief="raised" if t in self.head_colours else "solid", bd=1)
@@ -379,12 +389,18 @@ class App:
             if var is None:
                 var = self.head_vars[t] = tk.StringVar()
                 var.trace_add("write", lambda *_, t=t: self._quiet or self.head_user_set.add(t))
+            note = ""
             if t not in self.head_user_set:
+                name, note = suggest(plan, merge, t)
                 self._quiet = True
-                var.set(by_name.get(suggest_preset(plan, merge, t), ""))
+                var.set(by_name.get(name, ""))
                 self._quiet = False
             ttk.Combobox(self.heads_frame, textvariable=var, values=list(self.preset_names),
                          width=48, state="readonly").grid(row=row, column=2, sticky="we", padx=(8, 0), pady=1)
+            if note:  # e.g. no TPU preset, so PLA was used
+                row += 1
+                ttk.Label(self.heads_frame, text=f"⚠ {note}", foreground=WARN_COLOUR).grid(
+                    row=row, column=2, sticky="w", padx=(8, 0))
 
     # --- toolhead colours --------------------------------------------------
 
@@ -446,22 +462,39 @@ class App:
     def convert_plan(self):
         plan, source = self.plan, self.plan_source
         merge = self.current_merge()
+        # only presets the user picked are passed; the rest are chosen for the
+        # final layout by convert, the same way the panel suggested them
         overrides = {}
         for t in sorted(set(merge)):
             chosen = self.preset_names.get(self.head_vars[t].get())
             if chosen and t in self.head_user_set:
                 overrides[t] = chosen
-            elif chosen:
-                plan.presets[t] = chosen
-        plan.notes.clear()
         colours = {t: c for t, c in self.head_colours.items() if t in set(merge)}
         target = self.plan_target
+        output = self.choose_output(default_output(source, target))
+        if output is None:
+            return  # cancelled; the panel stays open
         self.close_plan()
-        self.run([source], plan=plan, merge=merge, overrides=overrides, colours=colours, target=target)
+        self.run([source], plan=plan, merge=merge, overrides=overrides, colours=colours,
+                 target=target, outputs={source: output})
+
+    def choose_output(self, output: Path) -> Path | None:
+        """ask before replacing a file that's already there"""
+        if not output.exists():
+            return output
+        spare = unique_output(output)
+        answer = messagebox.askyesnocancel(
+            "File already exists",
+            f"{output.name} already exists.\n\nYes: replace it\nNo: keep both, saving as {spare.name}\n"
+            "Cancel: don't convert", parent=self.root)
+        if answer is None:
+            return None
+        return output if answer else spare
 
     # --- converting -------------------------------------------------------
 
-    def run(self, files: list[Path], plan=None, merge=None, overrides=None, colours=None, target=None):
+    def run(self, files: list[Path], plan=None, merge=None, overrides=None, colours=None, target=None,
+            outputs: dict[Path, Path] | None = None):
         # a plan is only valid for the printer it was made for
         target = target or self.target()
         testing = self.check.get() and self.tester is not None
@@ -479,15 +512,16 @@ class App:
                 target, lib = self.library(target)
                 for number, source in enumerate(files, start=1):
                     self.set_status(f"Converting {number} of {len(files)}: {source.name}…")
-                    output = default_output(source, target)
+                    # batches never replace an earlier conversion; they keep both
+                    output = (outputs or {}).get(source) or unique_output(default_output(source, target))
                     try:
                         report = convert(source, output, target, lib, overrides or {},
                                          merge=merge, plan=plan if len(files) == 1 else None,
                                          colours=colours)
-                    except (ConversionError, KeyError, OSError) as exc:
+                    except Exception as exc:  # one bad file mustn't stop the rest
                         failed.append(source)
                         self.write(f"✗ {source.name}: not converted", "fail")
-                        self.write(f"  {exc}\n")
+                        self.write(f"  {_explain(exc)}\n")
                         step += 2 if testing else 1
                         self.later(lambda n=step: self.progress.configure(value=n))
                         continue
@@ -506,9 +540,9 @@ class App:
                         step += 1
                         self.later(lambda n=step: self.progress.configure(value=n))
                     self.write("")
-            except FileNotFoundError as exc:
+            except Exception as exc:  # no profiles, or something unexpected outside a file
                 failed.extend(files[len(converted) + len(failed):])
-                self.write(f"✗ {exc}\n", "fail")
+                self.write(f"✗ {_explain(exc)}\n", "fail")
             finally:
                 self.later(lambda: self.finish(converted, failed, slice_failed))
 
@@ -544,6 +578,8 @@ class App:
 
 
 def main(files: list[str] | None = None) -> int:
+    if files is None:
+        files = sys.argv[1:]
     root = tk.Tk()
     App(root, [Path(f) for f in files or [] if f.lower().endswith(".3mf")])
     root.mainloop()

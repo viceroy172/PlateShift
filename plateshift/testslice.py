@@ -39,14 +39,22 @@ def _seconds(text: str) -> int:
 
 
 def run(slicer, project: Path, timeout: int = 900) -> SliceResult:
-    """slicer: a slicers.Slicer, or the path of a slicer's program"""
+    """slicer: a slicers.Slicer, or the path of a slicer's program. never raises"""
+    try:
+        return _run(slicer, project, timeout)
+    except Exception as exc:
+        return SliceResult(False, error=f"{type(exc).__name__}: {exc}")
+
+
+def _run(slicer, project: Path, timeout: int) -> SliceResult:
     command = slicer.command if hasattr(slicer, "command") else (lambda *a: [str(slicer), *a])
     # flatpak apps can't see the system /tmp, so on linux work under ~/.cache
     base = None
     if sys.platform != "win32":
         base = Path.home() / ".cache" / "plateshift"
         base.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="plateshift-", dir=base) as out:
+    # a slicer child process can still hold its log open after a timeout
+    with tempfile.TemporaryDirectory(prefix="plateshift-", dir=base, ignore_cleanup_errors=True) as out:
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         try:
             # cwd: the slicer drops a log file wherever it's started

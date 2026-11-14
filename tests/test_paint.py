@@ -32,6 +32,10 @@ class PaintTests(unittest.TestCase):
         self.assertEqual(paint.states(new), {2, 4})
         self.assertEqual(paint.decode(paint.encode(new)), new)
 
+    def test_absurdly_deep_paint_is_refused_not_crashed(self):
+        with self.assertRaisesRegex(ValueError, "deep"):
+            paint.decode("F" * 3000)
+
     def test_remap_model(self):
         xml = '<triangle v1="0" v2="1" v3="2" paint_color="1C"/><triangle v1="0" v2="1" v3="2" paint_color="4"/>'
         out, n = paint.remap_model(xml, {4: 2})

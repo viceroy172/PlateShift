@@ -34,7 +34,7 @@ def _packed(path: Path) -> dict | None:
     if path not in _packed_cache:
         try:
             _packed_cache[path] = opc.read(path)
-        except (OSError, opc.OpcError):
+        except Exception:  # an unreadable or odd file just isn't used
             _packed_cache[path] = None
     return _packed_cache[path]
 
