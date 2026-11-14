@@ -12,15 +12,36 @@ Supported targets (more are mostly a matter of adding a line to
 |---------|--------------------------|-----------|---------------|
 | `c5p`   | Flashforge Creator 5 Pro | 4         | Flash Studio or OrcaSlicer |
 | `c5`    | Flashforge Creator 5     | 4         | Flash Studio or OrcaSlicer |
-| `k1max` | Creality K1 Max          | 1         | Creality Print |
+| `k1max` | Creality K1 Max          | 1         | OrcaSlicer or Creality Print |
 
 ## Requirements
 
-- Windows
-- Flash Studio or OcraSlicer installed, for the Flashforge printer profiles
-  (Creality Print for the K1 Max)
-- Either `PlateShift.exe`, or Python 3.11 or newer with Tk (standard library only,
-  nothing to `pip install`)
+- Windows or Linux
+- A slicer that has the printer's profiles: Flash Studio or OcraSlicer for the
+  Flashforge printers, OrcaSlicer or Creality Print for the K1 Max. OrcaSlicer 2.4
+  and later packs its profiles into `.opc` files; PlateShift reads those directly.
+- On Windows, `PlateShift.exe`. Otherwise Python 3.11 or newer with Tk (standard
+  library only, nothing to `pip install`)
+
+## Linux
+
+```
+sudo apt install python3 python3-tk        # Debian/Ubuntu; use your distro's equivalent
+git clone https://github.com/viceroy172/PlateShift
+cd PlateShift
+./plateshift.sh                            # the window
+./plateshift.sh convert "Model.3mf"        # or the command line
+```
+
+PlateShift looks for OrcaSlicer's profiles in `~/.config/OrcaSlicer/system` (and the
+flatpak equivalent under `~/.var/app`). OrcaSlicer only puts a vendor there once
+you've added one of its printers, so add your printer in OrcaSlicer first. If the
+profiles live somewhere else, point PlateShift at them with `--profiles <folder>` or
+the `PLATESHIFT_PROFILES` environment variable.
+
+"Then open in" and the test slice find OrcaSlicer on your `PATH`, as a flatpak, or as
+an AppImage in `~/Applications`, `~/Downloads`, `~/.local/bin` or `/opt`. Dropping files
+on the window is Windows only; use **Choose 3MF files…** instead.
 
 ## Use it
 
@@ -36,12 +57,13 @@ changes the colour the slicer shows, not what gets printed. Projects with more c
 printer has toolheads start with the closest colours already merged. Several files
 at once are matched automatically.
 
-**Test slice** runs Flash Studio in the background after converting and adds the
-print time and filament weight to the report, or the error if it won't slice.
+**Test slice** runs Flash Studio (or OrcaSlicer, where there's no Flash Studio) in
+the background after converting and adds the print time and filament weight to the
+report, or the error if it won't slice.
 **Then open in** opens a single converted file in a slicer that has the printer's
 profiles: Flash Studio or OrcaSlicer for the Flashforge printers, Creality Print or
 OrcaSlicer for the K1 Max. The choice is remembered per printer in
-`%APPDATA%\PlateShift\settings.json`.
+`%APPDATA%\PlateShift\settings.json` (`~/.config/plateshift/settings.json` on Linux).
 
 **Command line:**
 
@@ -79,8 +101,9 @@ The original file is never modified.
 
 - Your own printer presets are never used. They hold things like the printer's IP
   address and access key, which shouldn't end up in a project file.
-- K1 Max projects use Creality Print's profiles. OrcaSlicer opens them as a project
-  printer; switch to your own K1 Max preset there if you want its settings.
+- K1 Max projects use OrcaSlicer's profiles when OrcaSlicer is installed, otherwise
+  Creality Print's. The two name the printer differently, so a project opened in the
+  other slicer shows up as a project printer.
 - Settings outside the carry-over list fall back to the target's values, so niche
   options the designer changed are left at their defualts.
 - Only the 0.4 mm nozzle presets are targeted.
@@ -95,9 +118,11 @@ setting as JSON, `Metadata/model_settings.config` holds objects and plates,
 `3D/3dmodel.model` holds where each object sits and the `3D/Objects/*.model` files
 hold the meshes, with painted colours stored per triangle as a small bit-packed tree
 (`plateshift/paint.py`). PlateShift resolves the target presets through their
-`inherits` chains (`plateshift/profiles.py`), builds new project settings and
-rewrites the colours (`plateshift/convert.py`), checks fit (`plateshift/fit.py`)
-and writes a new zip.
+`inherits` chains (`plateshift/profiles.py`), reading OrcaSlicer's packed `.opc`
+profile files itself where needed (`plateshift/opc.py`, written from the layout in
+OrcaSlicer's `docs/HLSD/preset-cache.md`), builds new project settings and rewrites
+the colours (`plateshift/convert.py`), checks fit (`plateshift/fit.py`) and writes a
+new zip.
 
 ## Building the exe
 

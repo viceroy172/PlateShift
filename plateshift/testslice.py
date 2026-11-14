@@ -38,12 +38,19 @@ def _seconds(text: str) -> int:
     return total
 
 
-def run(exe: Path, project: Path, timeout: int = 900) -> SliceResult:
-    with tempfile.TemporaryDirectory(prefix="plateshift-") as out:
+def run(slicer, project: Path, timeout: int = 900) -> SliceResult:
+    """slicer: a slicers.Slicer, or the path of a slicer's program"""
+    command = slicer.command if hasattr(slicer, "command") else (lambda *a: [str(slicer), *a])
+    # flatpak apps can't see the system /tmp, so on linux work under ~/.cache
+    base = None
+    if sys.platform != "win32":
+        base = Path.home() / ".cache" / "plateshift"
+        base.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="plateshift-", dir=base) as out:
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         try:
             # cwd: the slicer drops a log file wherever it's started
-            proc = subprocess.run([str(exe), "--slice", "0", "--outputdir", out, str(Path(project).resolve())],
+            proc = subprocess.run(command("--slice", "0", "--outputdir", out, str(Path(project).resolve())),
                                   capture_output=True, text=True, errors="replace",
                                   timeout=timeout, creationflags=flags, cwd=out)
         except subprocess.TimeoutExpired:

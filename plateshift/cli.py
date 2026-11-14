@@ -6,8 +6,8 @@ from pathlib import Path
 
 from .convert import ConversionError, analyse, convert, default_output
 from .printers import BY_KEY, TARGETS
-from .profiles import ProfileLibrary, find_profile_root, user_preset_dirs
-from .slicers import find_slicers
+from .profiles import ProfileLibrary, locate, user_preset_dirs
+from .slicers import find_slicers, test_slicer
 from .testslice import run as test_slice
 
 
@@ -69,9 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _library(target, profiles: Path | None) -> ProfileLibrary:
-    root = find_profile_root(target.vendor, [profiles] if profiles else None, machine=target.machine)
-    return ProfileLibrary(root, target.vendor, user_preset_dirs())
+def _library(target, profiles: Path | None):
+    target, root = locate(target, [profiles] if profiles else None)
+    return target, ProfileLibrary(root, target.vendor, user_preset_dirs())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
 
     target = BY_KEY[args.printer]
     try:
-        lib = _library(target, args.profiles)
+        target, lib = _library(target, args.profiles)
     except FileNotFoundError as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -110,9 +110,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  toolhead {t}: {plan.presets[t]}")
         return 0
 
-    flash = next((s.exe for s in find_slicers() if s.label == "Flash Studio"), None)
-    if args.test_slice and not flash:
-        print("Flash Studio isn't installed, so --test-slice can't run.", file=sys.stderr)
+    tester = test_slicer({s.label: s for s in find_slicers()}) if args.test_slice else None
+    if args.test_slice and not tester:
+        print("Neither Flash Studio nor OrcaSlicer was found, so --test-slice can't run.", file=sys.stderr)
         return 2
 
     overrides = dict(args.filament)
@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         print("\n".join(report.lines()))
         if args.test_slice:
-            result = test_slice(flash, output)
+            result = test_slice(tester, output)
             print(f"  {result.line()}")
             failures += not result.ok
     return 1 if failures else 0

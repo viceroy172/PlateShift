@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -13,8 +12,9 @@ from tkinter import colorchooser, filedialog, ttk
 from . import dnd
 from .convert import ConversionError, analyse, convert, default_output, lead_colour, suggest_preset
 from .printers import TARGETS
-from .profiles import ProfileLibrary, find_profile_root, user_preset_dirs
-from .slicers import Slicer, find_slicers, open_in
+from .profiles import ProfileLibrary, locate, user_preset_dirs
+from .slicers import Slicer, find_slicers, open_in, test_slicer
+from .slicers import show_in_folder as reveal
 from .testslice import run as test_slice
 
 OK_COLOUR = "#1a7f37"
@@ -24,8 +24,10 @@ DONT_OPEN = "Don't open"
 
 
 def _settings_file() -> Path:
-    base = os.environ.get("APPDATA") or str(Path.home())
-    return Path(base) / "PlateShift" / "settings.json"
+    if os.environ.get("APPDATA"):
+        return Path(os.environ["APPDATA"]) / "PlateShift" / "settings.json"
+    base = os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config"
+    return Path(base) / "plateshift" / "settings.json"
 
 
 def load_settings() -> dict:
@@ -58,7 +60,7 @@ class App:
         self.settings = load_settings()
         self.settings.pop("open_in", None)  # old single choice, now per printer
         self.slicers: dict[str, Slicer] = {s.label: s for s in find_slicers()}
-        self.flash = self.slicers.get("Flash Studio")
+        self.tester = test_slicer(self.slicers)
         root.title("PlateShift")
         root.minsize(680, 460)
 
@@ -84,12 +86,13 @@ class App:
         self._quiet = False
         self.printer.trace_add("write", lambda *_: self.update_slicer_choices())
 
-        self.check = tk.BooleanVar(value=bool(self.settings.get("test_slice", True)) and bool(self.flash))
-        self.checker = ttk.Checkbutton(top, text="Test slice with Flash Studio afterwards",
-                                       variable=self.check)
+        self.check = tk.BooleanVar(value=bool(self.settings.get("test_slice", True)) and bool(self.tester))
+        self.checker = ttk.Checkbutton(top, variable=self.check,
+                                       text=f"Test slice with {self.tester.label} afterwards" if self.tester
+                                       else "Test slice (needs Flash Studio or OrcaSlicer)")
         self.checker.grid(row=2, column=1, sticky="w", padx=8, pady=(6, 0))
-        if not self.flash:
-            self.checker.configure(state="disabled", text="Test slice (needs Flash Studio)")
+        if not self.tester:
+            self.checker.configure(state="disabled")
 
         self.open_choice.trace_add("write", lambda *_: self.remember(slicer=True))
         for var in (self.printer, self.check):
@@ -122,7 +125,9 @@ class App:
         self.log.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
-        dnd.enable(root, self.handle_files)
+        if not dnd.enable(root, self.handle_files):
+            self.hint.configure(text="Choose files to convert. Converted copies are saved next to the "
+                                     "originals; open them with File → Open Project.")
         if initial_files:
             root.after(100, lambda: self.handle_files(initial_files))
 
@@ -131,12 +136,13 @@ class App:
     def target(self):
         return next(t for t in TARGETS if t.label == self.printer.get())
 
-    def library(self, target) -> ProfileLibrary:
-        lib = self.libraries.get(target.key)
-        if lib is None:
-            root = find_profile_root(target.vendor, machine=target.machine)
-            lib = self.libraries[target.key] = ProfileLibrary(root, target.vendor, user_preset_dirs())
-        return lib
+    def library(self, target):
+        """(target with the preset names this pc has, its profile library)"""
+        found = self.libraries.get(target.key)
+        if found is None:
+            located, root = locate(target)
+            found = self.libraries[target.key] = (located, ProfileLibrary(root, target.vendor, user_preset_dirs()))
+        return found
 
     def update_slicer_choices(self):
         # each printer only offers the slicers that have its profiles
@@ -184,8 +190,8 @@ class App:
         return True
 
     def show_in_folder(self):
-        if self.last_output and self.last_output.exists():
-            subprocess.Popen(["explorer", "/select,", str(self.last_output)])
+        if self.last_output and self.last_output.exists() and not reveal(self.last_output):
+            self.write(f"Saved in {self.last_output.parent}\n")
 
     # called from the worker thread
     def write(self, text: str, tag: str | None = None):
@@ -205,7 +211,7 @@ class App:
         self.button.configure(state=state)
         self.picker.configure(state="disabled" if busy else "readonly")
         self.opener.configure(state="disabled" if busy else "readonly")
-        if self.flash:
+        if self.tester:
             self.checker.configure(state=state)
         self.root.configure(cursor="watch" if busy else "")
 
@@ -242,13 +248,14 @@ class App:
 
         def work():
             try:
-                plan = analyse(source, target, self.library(target))
+                located, lib = self.library(target)
+                plan = analyse(source, located, lib)
             except (ConversionError, FileNotFoundError, OSError) as exc:
                 self.write(f"✗ {source.name}: not converted", "fail")
                 self.write(f"  {exc}\n")
                 self.root.after(0, lambda: self.after_prepare(None, None, None))
                 return
-            self.root.after(0, lambda: self.after_prepare(source, target, plan))
+            self.root.after(0, lambda: self.after_prepare(source, located, plan))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -416,7 +423,7 @@ class App:
 
     def run(self, files: list[Path], plan=None, merge=None, overrides=None, colours=None):
         target = self.target()
-        testing = self.check.get() and self.flash is not None
+        testing = self.check.get() and self.tester is not None
         self.set_busy(True)
         self.show.pack_forget()
         self.open_button.pack_forget()
@@ -424,10 +431,11 @@ class App:
         self.set_status(f"Converting {len(files)} file(s)…")
 
         def work():
+            nonlocal target
             converted, failed, slice_failed = [], [], []
             step = 0
             try:
-                lib = self.library(target)
+                target, lib = self.library(target)
                 for number, source in enumerate(files, start=1):
                     self.set_status(f"Converting {number} of {len(files)}: {source.name}…")
                     output = default_output(source, target)
@@ -449,8 +457,8 @@ class App:
                     step += 1
                     self.root.after(0, lambda n=step: self.progress.configure(value=n))
                     if testing:
-                        self.set_status(f"Test slicing {output.name} in Flash Studio…")
-                        result = test_slice(self.flash.exe, output)
+                        self.set_status(f"Test slicing {output.name} in {self.tester.label}…")
+                        result = test_slice(self.tester, output)
                         self.write(f"  {'✓' if result.ok else '✗'} {result.line()}", "ok" if result.ok else "fail")
                         if not result.ok:
                             slice_failed.append(output)

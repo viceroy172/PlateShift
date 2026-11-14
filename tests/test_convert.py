@@ -15,7 +15,7 @@ from make_project import bambu_settings, write_project  # noqa: E402
 from plateshift import paint  # noqa: E402
 from plateshift.convert import ConversionError, _plate_centre, _plate_columns, analyse, convert  # noqa: E402
 from plateshift.printers import BY_KEY, Target  # noqa: E402
-from plateshift.profiles import ProfileLibrary, find_profile_root  # noqa: E402
+from plateshift.profiles import ProfileLibrary, locate  # noqa: E402
 
 MACHINE = "Test C5P 0.4 nozzle"
 TARGET = Target("t", "Test C5P", "Testvendor", MACHINE, "0.20mm Standard @T", 4, "T")
@@ -207,13 +207,26 @@ class ConvertTests(unittest.TestCase):
         names = [p["name"] for p in lib.compatible("filament", MACHINE, include_user=True)]
         self.assertIn("My SBS", names)
         src = write_project(self.tmp / "u.3mf", bambu_settings(), [[(128, 128)]])
-        report = convert(src, self.tmp / "u-out.3mf", TARGET, lib, overrides={2: "My SBS"})
+        convert(src, self.tmp / "u-out.3mf", TARGET, lib, overrides={2: "My SBS"})
         s = json.loads(read(self.tmp / "u-out.3mf", "Metadata/project_settings.config"))
         self.assertEqual(s["filament_settings_id"][1], "My SBS")
         self.assertEqual(s["nozzle_temperature"][1], "235")
         self.assertEqual(s["inherits_group"][2], "Generic PLA @T")
         # auto choice never picks user presets
         self.assertNotIn("My SBS", s["filament_settings_id"][0])
+
+    def test_user_presets_follow_renamed_parents(self):
+        # orca renamed "Creality Generic PLA" to "Generic PLA @Creality"; old user presets still work
+        _write(self.tmp / "profiles" / "Testvendor" / "filament" / "Generic PLA @T.json", {
+            "name": "Generic PLA @T", "inherits": "Generic PLA @System", "instantiation": "true",
+            "compatible_printers": [MACHINE], "renamed_from": ["Old Generic PLA"]})
+        user = self.tmp / "user2"
+        _write(user / "filament" / "Old SBS.json", {"name": "Old SBS", "inherits": "Old Generic PLA",
+                                                     "nozzle_temperature": ["232"]})
+        lib = ProfileLibrary(self.tmp / "profiles", "Testvendor", [("OrcaSlicer", user)])
+        p = lib.resolve("filament", "Old SBS")
+        self.assertEqual(p["_parent"], "Generic PLA @T")
+        self.assertIn(MACHINE, p["compatible_printers"])
 
     def test_objects_off_the_bed_are_reported(self):
         src = write_project(self.tmp / "big.3mf", bambu_settings(), [[(128, 128), (250, 128)]], size=20)
@@ -332,7 +345,8 @@ class InstalledProfilesTest(unittest.TestCase):
 
     def test_c5p_conversion(self):
         target = BY_KEY["c5p"]
-        lib = ProfileLibrary(find_profile_root("Flashforge"), "Flashforge")
+        target, root = locate(target)
+        lib = ProfileLibrary(root, "Flashforge")
         tmp = Path(tempfile.mkdtemp())
         src = write_project(tmp / "in.3mf", bambu_settings(), [[(128, 128)]])
         report = convert(src, tmp / "out.3mf", target, lib)

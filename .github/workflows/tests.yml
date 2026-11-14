@@ -4,9 +4,10 @@ on: [push, pull_request]
 
 jobs:
   test:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [windows-latest, ubuntu-latest]
         python: ["3.11", "3.13"]
     steps:
       - uses: actions/checkout@v4
