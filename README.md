@@ -24,8 +24,21 @@ Supported targets (more are mostly a matter of adding a line to
 - A slicer that has the printer's profiles: Flash Studio or OcraSlicer for the
   Flashforge printers, OrcaSlicer or Creality Print for the K1 Max. OrcaSlicer 2.4
   and later packs its profiles into `.opc` files; PlateShift reads those directly.
-- On Windows, `PlateShift.exe`; on macOS, `PlateShift.app`. Otherwise Python 3.11 or
-  newer with Tk (standard library only, nothing to `pip install`)
+- On Windows, `PlateShift.exe`; on macOS, `PlateShift.app`. Both need nothing else
+  installed. Running from source instead needs Python 3.11 or newer with Tk
+  (standard library only, nothing to `pip install`).
+
+## Windows
+
+Download `PlateShift.exe` from the [latest release](https://github.com/viceroy172/PlateShift/releases/latest)
+and run it. That's all: Python isn't needed. It isn't code-signed, so the first time
+Windows SmartScreen may warn about it: choose **More info → Run anyway**.
+
+`PlateShift.bat` in the source code is only for running PlateShift from source. That
+needs Python 3.11 or newer from [python.org](https://www.python.org/downloads/windows/),
+installed with **tcl/tk and IDLE** and the **py launcher** ticked (both are on by
+default). If it can't find a suitable Python, `PlateShift.bat` says so and points you
+back to the exe.
 
 ## Linux
 
@@ -82,9 +95,9 @@ hasn't had much use on real Macs yet; reports are welcome.
 
 ## Use it
 
-**Window:** run `PlateShift.exe` (or double-click `PlateShift.bat`), `PlateShift.app`
-on macOS, or `./plateshift.sh` on Linux. Pick the printer, then choose files or drop
-them on the window.
+**Window:** run `PlateShift.exe` on Windows, `PlateShift.app` on macOS, or
+`./plateshift.sh` on Linux (`PlateShift.bat` on Windows when running from source).
+Pick the printer, then choose files or drop them on the window.
 
 For a single file you get a panel listing the project's colours and how much of
 the model each one paints. Put each colour on a toolhead (two colours on one
