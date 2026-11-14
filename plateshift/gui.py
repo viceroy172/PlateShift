@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import sys
 import threading
 import tkinter as tk
@@ -58,6 +59,7 @@ class App:
         self.last_output: Path | None = None
         self.busy = False
         self._quiet = False
+        self._calls: queue.Queue = queue.Queue()
         self.settings = load_settings()
         self.settings.pop("open_in", None)  # old single choice, now per printer
         self.slicers: dict[str, Slicer] = {s.label: s for s in find_slicers()}
@@ -96,7 +98,7 @@ class App:
         self._quiet = True
         self.update_slicer_choices()
         self._quiet = False
-        self.printer.trace_add("write", lambda *_: self.update_slicer_choices())
+        self.printer.trace_add("write", lambda *_: self.printer_changed())
 
         self.check = tk.BooleanVar(value=bool(self.settings.get("test_slice", True)) and bool(self.tester))
         self.checker = ttk.Checkbutton(top, variable=self.check,
@@ -143,6 +145,22 @@ class App:
                                      "originals; open them with File → Open Project.")
         if initial_files:
             root.after(100, lambda: self.handle_files(initial_files))
+        self.drain()
+
+    # --- talking to the window from worker threads ----------------------
+    # tk must only be touched from its own thread; workers queue calls instead
+
+    def later(self, fn):
+        self._calls.put(fn)
+
+    def drain(self):
+        while True:
+            try:
+                fn = self._calls.get_nowait()
+            except queue.Empty:
+                break
+            fn()
+        self.root.after(40, self.drain)
 
     # --- settings and small helpers -------------------------------------
 
@@ -213,10 +231,10 @@ class App:
             self.log.insert("end", text + "\n", tag or ())
             self.log.see("end")
             self.log.configure(state="disabled")
-        self.root.after(0, append)
+        self.later(append)
 
     def set_status(self, text: str, colour: str = MUTED):
-        self.root.after(0, lambda: self.status.configure(text=text, fg=colour, font=("Segoe UI", 9)))
+        self.later(lambda: self.status.configure(text=text, fg=colour, font=("Segoe UI", 9)))
 
     def set_busy(self, busy: bool):
         self.busy = busy
@@ -266,9 +284,9 @@ class App:
             except (ConversionError, FileNotFoundError, OSError) as exc:
                 self.write(f"✗ {source.name}: not converted", "fail")
                 self.write(f"  {exc}\n")
-                self.root.after(0, lambda: self.after_prepare(None, None, None))
+                self.later(lambda: self.after_prepare(None, None, None))
                 return
-            self.root.after(0, lambda: self.after_prepare(source, located, plan))
+            self.later(lambda: self.after_prepare(source, located, plan))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -411,6 +429,14 @@ class App:
             save_settings(self.settings)
         self.refresh_heads()
 
+    def printer_changed(self):
+        self.update_slicer_choices()
+        # a panel built for the old printer has the wrong toolheads and presets
+        if getattr(self, "plan", None) is not None and not self.busy:
+            source = self.plan_source
+            self.close_plan()
+            self.prepare(source)
+
     def close_plan(self):
         for child in self.plan_frame.winfo_children():
             child.destroy()
@@ -429,13 +455,15 @@ class App:
                 plan.presets[t] = chosen
         plan.notes.clear()
         colours = {t: c for t, c in self.head_colours.items() if t in set(merge)}
+        target = self.plan_target
         self.close_plan()
-        self.run([source], plan=plan, merge=merge, overrides=overrides, colours=colours)
+        self.run([source], plan=plan, merge=merge, overrides=overrides, colours=colours, target=target)
 
     # --- converting -------------------------------------------------------
 
-    def run(self, files: list[Path], plan=None, merge=None, overrides=None, colours=None):
-        target = self.target()
+    def run(self, files: list[Path], plan=None, merge=None, overrides=None, colours=None, target=None):
+        # a plan is only valid for the printer it was made for
+        target = target or self.target()
         testing = self.check.get() and self.tester is not None
         self.set_busy(True)
         self.show.pack_forget()
@@ -461,14 +489,14 @@ class App:
                         self.write(f"✗ {source.name}: not converted", "fail")
                         self.write(f"  {exc}\n")
                         step += 2 if testing else 1
-                        self.root.after(0, lambda n=step: self.progress.configure(value=n))
+                        self.later(lambda n=step: self.progress.configure(value=n))
                         continue
                     converted.append(report.output)
                     lines = report.lines()
                     self.write(f"✓ {lines[0]}", "ok")
                     self.write("\n".join(lines[1:]))
                     step += 1
-                    self.root.after(0, lambda n=step: self.progress.configure(value=n))
+                    self.later(lambda n=step: self.progress.configure(value=n))
                     if testing:
                         self.set_status(f"Test slicing {output.name} in {self.tester.label}…")
                         result = test_slice(self.tester, output)
@@ -476,13 +504,13 @@ class App:
                         if not result.ok:
                             slice_failed.append(output)
                         step += 1
-                        self.root.after(0, lambda n=step: self.progress.configure(value=n))
+                        self.later(lambda n=step: self.progress.configure(value=n))
                     self.write("")
             except FileNotFoundError as exc:
                 failed.extend(files[len(converted) + len(failed):])
                 self.write(f"✗ {exc}\n", "fail")
             finally:
-                self.root.after(0, lambda: self.finish(converted, failed, slice_failed))
+                self.later(lambda: self.finish(converted, failed, slice_failed))
 
         threading.Thread(target=work, daemon=True).start()
 
