@@ -46,7 +46,7 @@ def main() -> int:
     root = tk.Tk()
     root.bell = lambda: None
     app = gui.App(root, [])
-    root.geometry("1040x720+80+80")
+    root.geometry("960x640+20+40")  # the ci mac screen is only 1024 wide
     root.lift()
     root.attributes("-topmost", True)
 
