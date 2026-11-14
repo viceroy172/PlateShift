@@ -5,6 +5,10 @@ another printer, entirely on your own PC. PlateShift never uses the internet: it
 reads the printer profiles your slicer already installed and rewrites the project
 file locally.
 
+| Pick a printer | Choose toolheads and filaments | Converted |
+|---|---|---|
+| ![PlateShift window ready to convert](screenshots/main_screen.png) | ![Colours of a project mapped to toolheads and presets](screenshots/file_selected.png) | ![A finished conversion with its report](screenshots/done_results.png) |
+
 Supported targets (more are mostly a matter of adding a line to
 `plateshift/printers.py`):
 
