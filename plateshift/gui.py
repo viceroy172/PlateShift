@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -63,6 +64,17 @@ class App:
         self.tester = test_slicer(self.slicers)
         root.title("PlateShift")
         root.minsize(680, 460)
+        # tk's stock linux look is dated; clam is built in and much cleaner.
+        # windows keeps its native theme
+        style = ttk.Style(root)
+        self.bg = None
+        if sys.platform != "win32" and "clam" in style.theme_names():
+            style.theme_use("clam")
+            self.bg = style.lookup("TFrame", "background")
+            root.configure(bg=self.bg)
+            # clam's bar is near enough the background colour to look empty when full
+            style.configure("Horizontal.TProgressbar", background=OK_COLOUR, troughcolor="#f2f1ee",
+                            bordercolor="#9e9a91", lightcolor=OK_COLOUR, darkcolor=OK_COLOUR)
 
         top = ttk.Frame(root, padding=(12, 12, 12, 4))
         top.pack(fill="x")
@@ -109,7 +121,8 @@ class App:
         status.pack(side="bottom", fill="x")
         self.progress = ttk.Progressbar(status, mode="determinate", length=160)
         self.progress.pack(side="left")
-        self.status = tk.Label(status, text="Ready. Choose files to convert.", anchor="w", fg=MUTED)
+        self.status = tk.Label(status, text="Ready. Choose files to convert.", anchor="w", fg=MUTED,
+                               **({"bg": self.bg} if self.bg else {}))
         self.status.pack(side="left", fill="x", expand=True, padx=10)
         self.show = ttk.Button(status, text="Show in folder", command=self.show_in_folder)
         self.open_button = ttk.Button(status, text="Open", command=self.open_last)
