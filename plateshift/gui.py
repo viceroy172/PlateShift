@@ -26,6 +26,23 @@ WARN_COLOUR = "#9a6700"
 MUTED = "#555555"
 DONT_OPEN = "Don't open"
 
+# each system's own fonts; mac tk draws the same point size noticeably smaller
+if sys.platform == "win32":
+    _UI, _MONO, _BUMP = "Segoe UI", "Consolas", 0
+elif sys.platform == "darwin":
+    _UI, _MONO, _BUMP = "Helvetica Neue", "Menlo", 3
+else:
+    _UI, _MONO, _BUMP = "DejaVu Sans", "DejaVu Sans Mono", 0
+
+
+def ui_font(size: int, *style: str) -> tuple:
+    return (_UI, size + _BUMP, *style)
+
+
+def mono_font(size: int) -> tuple:
+    return (_MONO, size + _BUMP)
+
+
 
 def _settings_file() -> Path:
     if os.environ.get("APPDATA"):
@@ -75,10 +92,10 @@ class App:
         root.title("PlateShift")
         root.minsize(680, 460)
         # tk's stock linux look is dated; clam is built in and much cleaner.
-        # windows keeps its native theme
+        # windows and macos keep their native themes
         style = ttk.Style(root)
         self.bg = None
-        if sys.platform != "win32" and "clam" in style.theme_names():
+        if sys.platform.startswith("linux") and "clam" in style.theme_names():
             style.theme_use("clam")
             self.bg = style.lookup("TFrame", "background")
             root.configure(bg=self.bg)
@@ -139,10 +156,10 @@ class App:
 
         self.log_frame = ttk.Frame(root, padding=(12, 12, 12, 4))
         self.log_frame.pack(fill="both", expand=True)
-        self.log = tk.Text(self.log_frame, wrap="word", height=12, state="disabled", font=("Consolas", 9))
+        self.log = tk.Text(self.log_frame, wrap="word", height=12, state="disabled", font=mono_font(9))
         self.log.tag_configure("ok", foreground=OK_COLOUR)
         self.log.tag_configure("fail", foreground=FAIL_COLOUR)
-        self.log.tag_configure("done", foreground=OK_COLOUR, font=("Segoe UI", 10, "bold"))
+        self.log.tag_configure("done", foreground=OK_COLOUR, font=ui_font(10, "bold"))
         scroll = ttk.Scrollbar(self.log_frame, command=self.log.yview)
         self.log.configure(yscrollcommand=scroll.set)
         self.log.pack(side="left", fill="both", expand=True)
@@ -242,7 +259,7 @@ class App:
         self.later(append)
 
     def set_status(self, text: str, colour: str = MUTED):
-        self.later(lambda: self.status.configure(text=text, fg=colour, font=("Segoe UI", 9)))
+        self.later(lambda: self.status.configure(text=text, fg=colour, font=ui_font(9)))
 
     def set_busy(self, busy: bool):
         self.busy = busy
@@ -304,7 +321,7 @@ class App:
         self.set_busy(False)
         if plan is None:
             self.status.configure(text="✗ Nothing was converted (see below)", fg=FAIL_COLOUR,
-                                  font=("Segoe UI", 10, "bold"))
+                                  font=ui_font(10, "bold"))
             return
         self.show_plan(source, target, plan)
 
@@ -323,7 +340,7 @@ class App:
 
         left = ttk.Frame(box)
         left.pack(side="left", fill="y", anchor="n")
-        ttk.Label(left, text="Project colours", font=("Segoe UI", 9, "bold")).grid(
+        ttk.Label(left, text="Project colours", font=ui_font(9, "bold")).grid(
             row=0, column=0, columnspan=4, sticky="w", pady=(0, 4))
         total = sum(f.usage for f in plan.filaments) or 1
         self.merge_vars = []
@@ -361,7 +378,7 @@ class App:
                                if target.toolheads > 1 else "")
         ttk.Label(buttons, text=note, foreground=MUTED, wraplength=520).pack(side="left")
         self.status.configure(text="Check the toolheads and filaments, then Convert.", fg=MUTED,
-                              font=("Segoe UI", 9))
+                              font=ui_font(9))
 
     def current_merge(self) -> list[int]:
         return [int(v.get()) for v in self.merge_vars]
@@ -371,7 +388,7 @@ class App:
         word = "Toolhead" if self.plan_target.toolheads > 1 else "Filament"
         for child in self.heads_frame.winfo_children():
             child.destroy()
-        ttk.Label(self.heads_frame, text=f"{word} presets", font=("Segoe UI", 9, "bold")).grid(
+        ttk.Label(self.heads_frame, text=f"{word} presets", font=ui_font(9, "bold")).grid(
             row=0, column=0, columnspan=3, sticky="w", pady=(0, 4))
         ttk.Label(self.heads_frame, text="click a colour to change it", foreground=MUTED).grid(
             row=0, column=2, sticky="e")
@@ -572,7 +589,7 @@ class App:
                     text += f", opening in {slicer.label}"
             elif slicer:
                 text += f". Use Open to load {self.last_output.name}"
-        self.status.configure(text=text, fg=colour, font=("Segoe UI", 10, "bold"))
+        self.status.configure(text=text, fg=colour, font=ui_font(10, "bold"))
         self.write(text.lstrip("✓✗ ").join(("── ", " ──")) + "\n", "done" if ok else "fail")
         self.root.bell()
 

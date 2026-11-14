@@ -1,4 +1,5 @@
-"""Accept files dropped from Explorer onto a Tk window (Windows only, no extra packages)."""
+"""Accept files dropped from Explorer onto a Tk window (Windows), or onto the dock
+icon (macOS). No extra packages."""
 
 from __future__ import annotations
 
@@ -11,6 +12,12 @@ _keep = []  # window procs must outlive the window
 
 
 def enable(root, on_drop) -> bool:
+    """True when files can be dropped on the window itself"""
+    if sys.platform == "darwin":
+        # tk on macos can't take drops on a window, but the app gets files dropped on
+        # its dock icon or opened from finder ("open with") through this hook
+        root.createcommand("::tk::mac::OpenDocument", lambda *paths: on_drop(list(paths)))
+        return False
     if sys.platform != "win32":
         return False
     import ctypes

@@ -2,7 +2,7 @@
 
 Windows: the registry (desktop installs under Uninstall, store apps under App
 Paths with a launcher alias). Linux: commands on PATH, flatpaks, AppImages in
-the usual folders.
+the usual folders. macOS: .app bundles in the Applications folders.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ class Slicer:
     label: str
     exe: Path
     args: tuple[str, ...] = ()   # e.g. ("run", "<app id>") for a flatpak
+    app: Path | None = None      # the .app bundle on macOS
 
     def command(self, *more: str) -> list[str]:
         return [str(self.exe), *self.args, *more]
@@ -37,6 +38,13 @@ KNOWN = [
 LINUX = [
     ("OrcaSlicer", ("orca-slicer", "OrcaSlicer", "orcaslicer"), r"orcaslicer", r"orca.?slicer.*\.appimage$"),
     ("Creality Print", ("CrealityPrint", "creality-print"), r"crealityprint", r"creality.?print.*\.appimage$"),
+]
+
+# label, .app name pattern
+MAC = [
+    ("Flash Studio", r"^flash ?studio"),
+    ("OrcaSlicer", r"^orca ?slicer"),
+    ("Creality Print", r"^creality ?print"),
 ]
 
 UNINSTALL = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
@@ -157,9 +165,51 @@ def _linux() -> list[Slicer]:
     return found
 
 
+def mac_apps() -> list[Path]:
+    """every .app in the Applications folders, one level of subfolders included"""
+    found = []
+    for base in (Path("/Applications"), Path.home() / "Applications"):
+        for pattern in ("*.app", "*/*.app"):
+            try:
+                found += sorted(base.glob(pattern))
+            except OSError:
+                continue
+    return found
+
+
+def bundle_exe(app: Path) -> Path | None:
+    """the program inside a .app, as its Info.plist names it"""
+    import plistlib
+    macos = app / "Contents" / "MacOS"
+    try:
+        with open(app / "Contents" / "Info.plist", "rb") as fh:
+            name = plistlib.load(fh).get("CFBundleExecutable")
+        if name and (macos / name).is_file():
+            return macos / name
+    except (OSError, ValueError):
+        pass
+    try:
+        return next((p for p in sorted(macos.iterdir()) if p.is_file() and os.access(p, os.X_OK)), None)
+    except OSError:
+        return None
+
+
+def _mac(apps: list[Path] | None = None) -> list[Slicer]:
+    apps = mac_apps() if apps is None else apps
+    found = []
+    for label, pattern in MAC:
+        app = next((a for a in apps if re.search(pattern, a.stem, re.IGNORECASE)), None)
+        exe = bundle_exe(app) if app else None
+        if exe:
+            found.append(Slicer(label, exe, app=app))
+    return found
+
+
 def find_slicers() -> list[Slicer]:
     if sys.platform == "win32":
         return _windows()
+    if sys.platform == "darwin":
+        return _mac()
     if sys.platform.startswith("linux"):
         return _linux()
     return []
@@ -171,8 +221,13 @@ def test_slicer(slicers: dict[str, Slicer]) -> Slicer | None:
 
 
 def open_in(slicer: Slicer, file: Path) -> None:
+    if sys.platform == "darwin" and slicer.app:
+        # hands the file to the app like a double-click, reusing a running copy
+        subprocess.Popen(["open", "-a", str(slicer.app), str(Path(file).resolve())],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
     flags = 0
-    extra = {}
+    extra: dict = {}
     if sys.platform == "win32":
         flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     else:

@@ -56,6 +56,12 @@ def default_profile_roots() -> list[Path]:
     for base in _config_dirs():
         roots += [base / "Orca-Flashforge" / "system", base / "OrcaSlicer" / "system"]
         roots += sorted(base.glob("Creality*Print*/system"), reverse=True)
+    if sys.platform == "darwin":
+        # the profiles shipped inside the slicer apps, for printers not added there yet
+        for base in (Path("/Applications"), Path.home() / "Applications"):
+            for app in ("Flash*Studio*.app", "Orca*Slicer*.app", "Creality*Print*.app"):
+                roots += sorted(base.glob(f"{app}/Contents/Resources/profiles"), reverse=True)
+                roots += sorted(base.glob(f"*/{app}/Contents/Resources/profiles"), reverse=True)
     if sys.platform == "win32":
         for program_files in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
             if not program_files:
@@ -132,20 +138,21 @@ class ProfileLibrary:
         self._resolved: dict[tuple[str, str], dict] = {}
         for folder in (vendor, SHARED_LIBRARY):
             base = self.root / folder
-            found_json = False
-            for kind in KINDS:
-                kind_dir = base / kind
-                if not kind_dir.is_dir():
-                    continue
-                for path in sorted(kind_dir.rglob("*.json")):
-                    self._files[kind].setdefault(path.stem, []).append(path)
-                    found_json = True
-            # a vendor is either its json tree or its packed file, json wins
-            if not found_json and (self.root / f"{folder}.opc").is_file():
-                packed = _packed(self.root / f"{folder}.opc")
+            packed_file = self.root / f"{folder}.opc"
+            # orca's rule: <vendor>.json beside the folder means the json tree is the
+            # vendor; otherwise a .opc is the whole vendor and the folder only holds
+            # images and helper files (e.g. filaments_color_codes.json)
+            if packed_file.is_file() and not (self.root / f"{folder}.json").is_file():
+                packed = _packed(packed_file)
                 for kind in KINDS:
                     for preset in (packed or {}).get(kind, []):
                         self._packed[kind].setdefault(preset["name"], preset)
+                continue
+            for kind in KINDS:
+                kind_dir = base / kind
+                if kind_dir.is_dir():
+                    for path in sorted(kind_dir.rglob("*.json")):
+                        self._files[kind].setdefault(path.stem, []).append(path)
         # old name -> current name, so presets made before a rename still find their parent
         self._renamed: dict[str, dict[str, str]] = {k: {} for k in KINDS}
         for kind in KINDS:

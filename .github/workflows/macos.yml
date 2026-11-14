@@ -1,0 +1,61 @@
+name: macos
+
+# real-world checks on a mac: plateshift against the official orcaslicer for
+# macos, and the PlateShift.app build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ORCA_VERSION: "2.5.1"
+
+jobs:
+  orcaslicer:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install OrcaSlicer ${{ env.ORCA_VERSION }}
+        run: |
+          curl -sSL -o orca.dmg "https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Mac_universal_V${ORCA_VERSION}.dmg"
+          hdiutil attach -nobrowse -quiet -mountpoint /Volumes/orca orca.dmg
+          cp -R /Volumes/orca/*.app /Applications/
+          hdiutil detach /Volumes/orca -quiet
+          ls /Applications | grep -i orca
+      - name: plateshift finds the app and its profiles by itself
+        run: |
+          python -c "from plateshift.slicers import find_slicers; print(find_slicers())"
+          python -m plateshift filaments --printer c5p | head -3
+          python -m plateshift filaments --printer k1max | head -3
+      - name: convert a bambu project and test slice it
+        run: |
+          app=$(ls -d /Applications/Orca*Slicer*.app | head -1)
+          python -c "import sys; from pathlib import Path; from plateshift.slicers import bundle_exe; print(bundle_exe(Path(sys.argv[1])))" "$app" > exe.txt
+          python tools/e2e.py --profiles "$app/Contents/Resources/profiles" --slicer "$(cat exe.txt)"
+
+  app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: build PlateShift.app
+        run: |
+          python -m pip install --quiet pyinstaller
+          python -m PyInstaller --noconfirm --windowed --name PlateShift --paths . \
+            --osx-bundle-identifier io.github.viceroy172.plateshift packaging/plateshift_app.py
+      - name: the app runs
+        run: dist/PlateShift.app/Contents/MacOS/PlateShift printers
+      - name: zip it
+        run: ditto -c -k --keepParent dist/PlateShift.app PlateShift-mac.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlateShift-mac
+          path: PlateShift-mac.zip

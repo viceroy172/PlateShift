@@ -301,8 +301,9 @@ class ConvertTests(unittest.TestCase):
         settings = bambu_settings(bed=180, wipe_tower_x=["90", "170"], wipe_tower_y=["45"],
                                   prime_tower_width="35")
         _, _, s = self.convert(settings)
-        self.assertEqual(s["wipe_tower_x"], ["128", "221"])  # clamped to bed
-        self.assertEqual(s["wipe_tower_y"], ["64"])
+        # 170 scales to 241.8; kept on the bed with room for the brim: 256 - 35 - 3 - 5
+        self.assertEqual(s["wipe_tower_x"], ["128", "213"])
+        self.assertEqual(s["wipe_tower_y"], ["64", "64"])  # one per plate, like x
 
     def test_bed_type_comes_from_the_printer(self):
         _write(self.tmp / "profiles" / "Testvendor" / "machine" / "Test C5P.json",
@@ -411,6 +412,25 @@ class ConvertTests(unittest.TestCase):
         _, _, s = self.convert(bambu_settings(bed_exclude_area=area), merge=[1, 1, 2, 2])
         self.assertNotEqual(s.get("bed_exclude_area"), ["0x0", "18x28"])
         self.assertIn(s.get("bed_exclude_area"), (None, area))
+
+    def test_plate_type_suits_every_filament(self):
+        # orca refuses to slice PETG on a Cool Plate (its cool plate temperature is 0)
+        petg = self.tmp / "profiles" / "OrcaFilamentLibrary" / "filament" / "Generic PETG @System.json"
+        data = json.loads(petg.read_text())
+        data.update(cool_plate_temp=["0"], textured_plate_temp=["70"])
+        petg.write_text(json.dumps(data))
+        lib = ProfileLibrary(self.tmp / "profiles", "Testvendor")
+        src = write_project(self.tmp / "plate.3mf", bambu_settings(curr_bed_type="Cool Plate"), [[(128, 128)]])
+        convert(src, self.tmp / "plate-out.3mf", TARGET, lib)
+        s = json.loads(read(self.tmp / "plate-out.3mf", "Metadata/project_settings.config"))
+        self.assertEqual(s["curr_bed_type"], "Textured PEI Plate")
+        # all PLA: the project's Cool Plate is fine and stays
+        settings = bambu_settings(curr_bed_type="Cool Plate", filament_type=["PLA"] * 4,
+                                  filament_settings_id=["Bambu PLA Basic @BBL X1C"] * 4)
+        src = write_project(self.tmp / "pla.3mf", settings, [[(128, 128)]])
+        convert(src, self.tmp / "pla-out.3mf", TARGET, lib)
+        s = json.loads(read(self.tmp / "pla-out.3mf", "Metadata/project_settings.config"))
+        self.assertEqual(s["curr_bed_type"], "Cool Plate")
 
     def test_unique_output_never_reuses_a_name(self):
         first = self.tmp / "x - T.3mf"

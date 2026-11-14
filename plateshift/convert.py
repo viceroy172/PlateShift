@@ -643,11 +643,36 @@ def _identity(out: dict, lib: ProfileLibrary, machine: dict, process: dict,
     if isinstance(machine.get("default_nozzle_volume_type"), list):
         out["nozzle_volume_type"] = list(machine["default_nozzle_volume_type"])
     try:
-        model = lib.resolve("machine", machine.get("printer_model", ""))
-        if model.get("default_bed_type"):
-            out["curr_bed_type"] = model["default_bed_type"]
+        default_bed = lib.resolve("machine", machine.get("printer_model", "")).get("default_bed_type", "")
     except KeyError:
-        pass
+        default_bed = ""  # packed (.opc) profiles don't carry the printer model file
+    out["curr_bed_type"] = _bed_type(default_bed or machine.get("default_bed_type") or "",
+                                     str(out.get("curr_bed_type") or ""), chosen)
+
+
+# plate name -> the filament setting that holds its bed temperature (0 = unsupported)
+BED_TEMPS = {
+    "Textured PEI Plate": "textured_plate_temp",
+    "High Temp Plate": "hot_plate_temp",
+    "Cool Plate": "cool_plate_temp",
+    "Engineering Plate": "eng_plate_temp",
+    "Textured Cool Plate": "textured_cool_plate_temp",
+    "Supertack Plate": "supertack_plate_temp",
+}
+
+
+def _bed_type(default: str, current: str, filaments: list[dict]) -> str:
+    """the printer's default plate if every filament can use it, else the project's,
+    else the first plate they all can. slicers refuse e.g. PETG on a Cool Plate"""
+    def suits(plate: str) -> bool:
+        key = BED_TEMPS.get(plate)
+        if key is None:
+            return False
+        return all(_as_float(f.get(key), 1.0) > 0 for f in filaments)
+    for plate in (default, current, *BED_TEMPS):
+        if plate and suits(plate):
+            return plate
+    return default or current
 
 
 def _rewrite_settings(src: dict, lib: ProfileLibrary, target: Target, overrides: dict[int, str],
@@ -780,6 +805,32 @@ def _move_prime_towers(settings: dict, old_box, new_box) -> None:
             pos = min(max(pos, new_lo), max(new_lo, new_hi - tower))
             moved.append(f"{pos:.3f}".rstrip("0").rstrip("."))
         settings[key] = moved
+
+
+def _fit_prime_towers(settings: dict, box, plate_count: int, filaments: int) -> None:
+    """keep every plate's prime tower on the bed. a position chosen for a bambu
+    tower can push a bigger multi-toolhead tower off the edge, and with no
+    position at all orca's default (15, 220) is too far back on a 256 mm bed"""
+    if filaments < 2 or str(settings.get("enable_prime_tower", "1")) in ("0", "false"):
+        return
+    width = _as_float(settings.get("prime_tower_width"), 35.0)
+    brim = max(_as_float(settings.get("prime_tower_brim_width"), 3.0), 3.0)
+    volume = _as_float(settings.get("prime_volume"), 45.0)
+    layer = max(_as_float(settings.get("layer_height"), 0.2), 0.05)
+    # generous estimate of the tower's depth: every toolhead purging each layer
+    depth = max(width, volume * filaments / (layer * width))
+    margin = 5.0
+    x0, y0, x1, y1 = box
+    xs = _as_list(settings.get("wipe_tower_x")) or ["15"]
+    ys = _as_list(settings.get("wipe_tower_y")) or ["220"]
+    count = max(len(xs), len(ys), plate_count)
+
+    def clamp(v, lo, hi):
+        return f"{min(max(v, lo), max(lo, hi)):.3f}".rstrip("0").rstrip(".")
+    settings["wipe_tower_x"] = [clamp(_as_float(xs[min(i, len(xs) - 1)], 15.0), x0 + brim + margin,
+                                      x1 - width - brim - margin) for i in range(count)]
+    settings["wipe_tower_y"] = [clamp(_as_float(ys[min(i, len(ys) - 1)], 220.0), y0 + brim + margin,
+                                      y1 - depth - brim - margin) for i in range(count)]
 
 
 def _drop_gcode_rels(rels_xml: str) -> str | None:
@@ -979,6 +1030,7 @@ def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
         new_box = _bed_box(settings.get("printable_area"))
         plate_of, plate_count = _plate_of_instances(job.model_settings)
         job.relocate(settings, old_box, new_box, plate_of, plate_count)
+        _fit_prime_towers(settings, new_box, plate_count, max(plan.merge))
         job.relabel(src, settings)
         job.check_fit(settings, new_box, plate_of, plate_count)
         job.drop_gcode()

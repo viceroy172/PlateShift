@@ -133,6 +133,13 @@ class OpcTests(unittest.TestCase):
         with self.assertRaisesRegex(opc.OpcError, "damaged"):
             opc.read(path)
 
+    def test_helper_json_beside_a_packed_vendor_is_ignored(self):
+        # orca keeps files like filament/filaments_color_codes.json next to BBL.opc
+        make_opc(self.tmp / "Acme.opc", "Acme", {"machine": [("Acme X 0.4 nozzle", "", [])]})
+        (self.tmp / "Acme" / "filament").mkdir(parents=True)
+        (self.tmp / "Acme" / "filament" / "filaments_color_codes.json").write_text("{}")
+        self.assertIn("Acme X 0.4 nozzle", ProfileLibrary(self.tmp, "Acme").names("machine"))
+
     def test_library_reads_packed_vendors_and_inherits_across_them(self):
         make_opc(self.tmp / "OrcaFilamentLibrary.opc", "OrcaFilamentLibrary", {"filament": [
             ("Generic PLA @System", "", [("filament_type", 0x4003, ["PLA"]),
