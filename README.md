@@ -20,12 +20,12 @@ Supported targets (more are mostly a matter of adding a line to
 
 ## Requirements
 
-- Windows or Linux
+- Windows, Linux or macOS
 - A slicer that has the printer's profiles: Flash Studio or OcraSlicer for the
   Flashforge printers, OrcaSlicer or Creality Print for the K1 Max. OrcaSlicer 2.4
   and later packs its profiles into `.opc` files; PlateShift reads those directly.
-- On Windows, `PlateShift.exe`. Otherwise Python 3.11 or newer with Tk (standard
-  library only, nothing to `pip install`)
+- On Windows, `PlateShift.exe`; on macOS, `PlateShift.app`. Otherwise Python 3.11 or
+  newer with Tk (standard library only, nothing to `pip install`)
 
 ## Linux
 
@@ -51,10 +51,40 @@ on the window is Windows only; use **Choose 3MF files…** instead.
 |---|---|---|
 | ![PlateShift on Linux, ready to convert](screenshots/linux_main_screen.png) | ![Colours mapped to toolheads on Linux](screenshots/linux_file_selected.png) | ![A finished conversion on Linux](screenshots/linux_done_results.png) |
 
+## macOS
+
+Download `PlateShift-mac.zip` from the [latest release](https://github.com/viceroy172/PlateShift/releases/latest),
+unzip it and drag `PlateShift.app` to Applications. The app isn't signed by Apple,
+so the first time macOS will refuse to open it: right-click the app, choose **Open**,
+then **Open** again (or run `xattr -dr com.apple.quarantine /Applications/PlateShift.app`).
+
+Or run it from source with Python 3.11+ from python.org (Homebrew's Python needs
+`brew install python-tk` as well):
+
+```
+git clone https://github.com/viceroy172/PlateShift
+cd PlateShift
+./plateshift.sh
+```
+
+PlateShift finds Flash Studio, OrcaSlicer and Creality Print in your Applications
+folder and reads their profiles from `~/Library/Application Support`, or from inside
+the app if you haven't added the printer there yet. Drop `.3mf` files on PlateShift's
+Dock icon, or use **Open With → PlateShift** in Finder; dropping onto the window
+itself isn't possible on macOS.
+
+| macOS: ready | Choose toolheads and filaments | Converted and test sliced in OrcaSlicer |
+|---|---|---|
+| ![PlateShift on macOS, ready to convert](screenshots/mac_main_screen.png) | ![Colours mapped to toolheads on macOS](screenshots/mac_file_selected.png) | ![A finished conversion on macOS](screenshots/mac_done_results.png) |
+
+The macOS build is tested automatically against the official OrcaSlicer for Mac, but
+hasn't had much use on real Macs yet; reports are welcome.
+
 ## Use it
 
-**Window:** run `PlateShift.exe` (or double-click `PlateShift.bat`), pick the
-printer, then choose files or drop them on the window.
+**Window:** run `PlateShift.exe` (or double-click `PlateShift.bat`), `PlateShift.app`
+on macOS, or `./plateshift.sh` on Linux. Pick the printer, then choose files or drop
+them on the window.
 
 For a single file you get a panel listing the project's colours and how much of
 the model each one paints. Put each colour on a toolhead (two colours on one
@@ -71,7 +101,7 @@ report, or the error if it won't slice.
 **Then open in** opens a single converted file in a slicer that has the printer's
 profiles: Flash Studio or OrcaSlicer for the Flashforge printers, Creality Print or
 OrcaSlicer for the K1 Max. The choice is remembered per printer in
-`%APPDATA%\PlateShift\settings.json` (`~/.config/plateshift/settings.json` on Linux).
+`%APPDATA%\PlateShift\settings.json` (`~/.config/plateshift/settings.json` on Linux and macOS).
 
 **Command line:**
 
@@ -132,7 +162,7 @@ OrcaSlicer's `docs/HLSD/preset-cache.md`), builds new project settings and rewri
 the colours (`plateshift/convert.py`), checks fit (`plateshift/fit.py`) and writes a
 new zip.
 
-## Building the exe
+## Building the apps
 
 ```
 py -3.11 -m venv .venv
@@ -141,6 +171,9 @@ build_exe.bat
 ```
 
 The result is `dist\PlateShift.exe`. Build with a Python that has Tk.
+
+`PlateShift.app` is built on a Mac by the `macos` GitHub workflow (the `app` job), which
+keeps it as a downloadable `PlateShift-mac` artifact.
 
 ## Tests
 
