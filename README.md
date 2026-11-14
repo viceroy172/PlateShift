@@ -47,6 +47,10 @@ the `PLATESHIFT_PROFILES` environment variable.
 an AppImage in `~/Applications`, `~/Downloads`, `~/.local/bin` or `/opt`. Dropping files
 on the window is Windows only; use **Choose 3MF files…** instead.
 
+| Linux: ready | Choose toolheads and filaments | Converted and test sliced in OrcaSlicer |
+|---|---|---|
+| ![PlateShift on Linux, ready to convert](screenshots/linux_main_screen.png) | ![Colours mapped to toolheads on Linux](screenshots/linux_file_selected.png) | ![A finished conversion on Linux](screenshots/linux_done_results.png) |
+
 ## Use it
 
 **Window:** run `PlateShift.exe` (or double-click `PlateShift.bat`), pick the
