@@ -39,6 +39,30 @@ jobs:
           python -c "import sys; from pathlib import Path; from plateshift.slicers import bundle_exe; print(bundle_exe(Path(sys.argv[1])))" "$app" > exe.txt
           python tools/e2e.py --profiles "$app/Contents/Resources/profiles" --slicer "$(cat exe.txt)"
 
+  screenshots:
+    # only when started by hand: pictures of the window for the README
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install OrcaSlicer ${{ env.ORCA_VERSION }}
+        run: |
+          curl -sSL -o orca.dmg "https://github.com/OrcaSlicer/OrcaSlicer/releases/download/v${ORCA_VERSION}/OrcaSlicer_Mac_universal_V${ORCA_VERSION}.dmg"
+          hdiutil attach -nobrowse -quiet -mountpoint /Volumes/orca orca.dmg
+          cp -R /Volumes/orca/*.app /Applications/
+          hdiutil detach /Volumes/orca -quiet
+      - name: take the screenshots
+        run: |
+          app=$(ls -d /Applications/Orca*Slicer*.app | head -1)
+          python tools/screenshots.py --profiles "$app/Contents/Resources/profiles" --out shots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-screenshots
+          path: shots/
+
   app:
     runs-on: macos-latest
     steps:
