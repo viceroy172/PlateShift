@@ -327,6 +327,15 @@ class ConvertTests(unittest.TestCase):
         self.assertIn(f'<metadata name="OrcaSlicer">{TARGET.orca_version}</metadata>', model)
         self.assertEqual(s["filament_colour"], ["#D6B685", "#141A0F", "#63860F", "#FFFFFF"])
 
+    def test_older_bambu_files_are_relabelled_too(self):
+        # found by hand: flash studio 2.4 called a bambu studio 2.5.0.66 file newer than itself
+        _, out, s = self.convert(bambu_settings(version="02.05.00.66"))
+        self.assertEqual(s["version"], TARGET.file_version)
+        model = read(out, "3D/3dmodel.model")
+        self.assertIn(f"BambuStudio-{TARGET.file_version}<", model)
+        self.assertNotIn("02.05.00.66", model)
+        self.assertIn(f'<metadata name="OrcaSlicer">{TARGET.orca_version}</metadata>', model)
+
     def test_bambu_per_nozzle_type_lists_are_cut_to_one_per_filament(self):
         # bambu 2.9: 4 filaments x 3 nozzle variants
         variants = ["Direct Drive Standard", "Direct Drive High Flow", "Direct Drive E3D High Flow"]

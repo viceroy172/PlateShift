@@ -160,7 +160,7 @@ converted settings behind.
 | Object positions | If the bed is a different size, objects and prime towers are moved so they stay where they were on their plate. A prime tower that would then run into an object is moved to the nearest clear spot. Anything that hangs off a plate, is too tall or leaves no room for the tower gets a warning |
 | Sliced G-code | Removed, because it was made for the original printer |
 | Bambu Studio 2.x extras | Per-nozzle-type lists are cut to the standard nozzle, `#D6B685FF` colours become `#D6B685`, Bambu-only options are dropped |
-| Version label | Files from a newer Bambu Studio are labelled the way Flash Studio labels its own projects, so it opens them without a version warning |
+| Version label | Every file is labelled the way Flash Studio labels its own projects, so it opens them without a "newer 3MF version" warning |
 
 The original file is never modified.
 

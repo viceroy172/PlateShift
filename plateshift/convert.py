@@ -221,13 +221,6 @@ def _as_float(value, default=0.0) -> float:
     return number if math.isfinite(number) else default
 
 
-def _version(text) -> tuple[int, ...]:
-    try:
-        return tuple(int(part) for part in str(text).split("."))
-    except ValueError:
-        return (0,)
-
-
 def _plain_colour(colour: str) -> str:
     # bambu 2.x adds alpha (#RRGGBBAA)
     colour = str(colour).strip()
@@ -1048,10 +1041,10 @@ class _Conversion:
             self.report.warnings.append("the new bed is smaller than the original; check that every object fits")
 
     def relabel(self, src: dict, settings: dict) -> None:
-        # flash studio refuses files from newer bambu versions
+        # label the file the way the target slicer labels its own projects. flash studio
+        # compares a bambu file's version with its own (2.4), so even bambu studio 2.5
+        # files get a "newer version" warning, and its command line refuses them
         target = self.target
-        if _version(src.get("version")) <= _version(target.file_version):
-            return
         settings["version"] = target.file_version
         if MAIN_MODEL in self.models:
             self.models[MAIN_MODEL] = _label_model(self.models[MAIN_MODEL], target)
