@@ -223,6 +223,11 @@ the real Flashforge presets when Flash Studio or OrcaSlicer is installed.
 
 PlateShift is not affiliated with Bambu Lab, Flashforge, Creality or MakerWorld.
 
+## Contact
+
+Bugs and ideas are best raised as [GitHub issues](https://github.com/viceroy172/PlateShift/issues).
+For anything else, email viceroy@imaginet.co.za.
+
 ## Licence
 
 MIT, see `LICENSE`.

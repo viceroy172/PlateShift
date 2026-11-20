@@ -25,7 +25,15 @@ class LauncherTests(unittest.TestCase):
     def test_every_command_goes_to_the_command_line(self):
         # a missing one opens the window instead and waits forever
         sub = next(a for a in build_parser()._actions if isinstance(a, argparse._SubParsersAction))
-        self.assertEqual(set(sub.choices), entry.COMMANDS - {"-h", "--help"})
+        self.assertEqual(set(sub.choices), entry.COMMANDS - {"-h", "--help", "--version"})
+
+    def test_version_names_the_release_and_repo(self):
+        from plateshift import REPO_URL, __version__
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as done:
+            cli.main(["--version"])
+        self.assertEqual(done.exception.code, 0)
+        self.assertEqual(out.getvalue().strip(), f"PlateShift {__version__} {REPO_URL}")
 
 
 class ConvertCommandTests(unittest.TestCase):

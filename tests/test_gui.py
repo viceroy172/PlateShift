@@ -76,6 +76,29 @@ class WindowTests(unittest.TestCase):
     def panel_ready(self):
         return getattr(self.app, "plan", None) is not None and not self.app.busy
 
+    def test_about_shows_the_version_and_github_link(self):
+        from plateshift import CONTACT, REPO_URL, __version__
+        opened = []
+        self.gui.webbrowser.open, saved = opened.append, self.gui.webbrowser.open
+        self.addCleanup(setattr, self.gui.webbrowser, "open", saved)
+        self.app.about()
+        self.app.about()  # a second click brings the same window forward
+        windows = [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)]
+        self.assertEqual(len(windows), 1)
+        labels = {}
+
+        def walk(w):
+            for c in w.winfo_children():
+                if c.winfo_class() in ("Label", "TLabel"):
+                    labels[str(c.cget("text"))] = c
+                walk(c)
+        walk(windows[0])
+        self.assertIn(f"Version {__version__}", labels)
+        self.assertIn(f"Contact: {CONTACT}", labels)
+        self.root.update()  # tk only delivers clicks to widgets on screen
+        labels[REPO_URL].event_generate("<Button-1>")
+        self.assertEqual(opened, [REPO_URL])
+
     def test_test_slicer_follows_the_printer(self):
         app = self.app
         self.assertEqual(str(app.checker.cget("state")), "disabled")  # no slicers found

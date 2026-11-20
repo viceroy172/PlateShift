@@ -1,6 +1,6 @@
 import sys
 
-COMMANDS = {"convert", "inspect", "printers", "filaments", "-h", "--help"}
+COMMANDS = {"convert", "inspect", "printers", "filaments", "-h", "--help", "--version"}
 
 
 def main() -> int:

@@ -8,10 +8,11 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from . import dnd
+from . import CONTACT, REPO_URL, __version__, dnd
 from .convert import (ConversionError, analyse, convert, default_output, lead_colour, suggest,
                       unique_output)
 from .printers import TARGETS
@@ -129,6 +130,9 @@ class App:
         self.checker = ttk.Checkbutton(top, variable=self.check)
         self.checker.grid(row=2, column=1, sticky="w", padx=8, pady=(6, 0))
         self.update_tester()
+        ttk.Button(top, text="About", command=self.about).grid(row=1, column=2, sticky="e", pady=(8, 0))
+        if sys.platform == "darwin":
+            root.createcommand("tkAboutDialog", self.about)  # the app menu's "About PlateShift"
 
         self.open_choice.trace_add("write", lambda *_: self.remember(slicer=True))
         for var in (self.printer, self.check):
@@ -459,6 +463,34 @@ class App:
             self.settings["recent_colours"] = recent[:10]
             save_settings(self.settings)
         self.refresh_heads()
+
+    def about(self):
+        if getattr(self, "about_window", None) is not None and self.about_window.winfo_exists():
+            self.about_window.lift()
+            return
+        win = self.about_window = tk.Toplevel(self.root)
+        win.title("About PlateShift")
+        win.resizable(False, False)
+        win.transient(self.root)
+        box = ttk.Frame(win, padding=(24, 18))
+        box.pack(fill="both", expand=True)
+        ttk.Label(box, text="PlateShift", font=ui_font(16, "bold")).pack(anchor="w")
+        ttk.Label(box, text=f"Version {__version__}", foreground=MUTED).pack(anchor="w", pady=(0, 10))
+        ttk.Label(box, wraplength=380, justify="left",
+                  text="Converts Bambu Studio and MakerWorld 3MF projects so they open ready to print on "
+                       "another printer. Everything happens on this computer; nothing is sent anywhere.").pack(
+            anchor="w")
+        link = tk.Label(box, text=REPO_URL, fg="#0b5cad", cursor="hand2", font=ui_font(10, "underline"),
+                        **({"bg": self.bg} if self.bg else {}))
+        link.pack(anchor="w", pady=(10, 0))
+        link.bind("<Button-1>", lambda e: webbrowser.open(REPO_URL))
+        ttk.Label(box, wraplength=380, justify="left", foreground=MUTED,
+                  text="Source code, help and new versions are on GitHub. Open source under the MIT licence. "
+                       "Not affiliated with Bambu Lab, Flashforge, Creality or MakerWorld.").pack(
+            anchor="w", pady=(10, 0))
+        ttk.Label(box, text=f"Contact: {CONTACT}", foreground=MUTED).pack(anchor="w", pady=(6, 0))
+        ttk.Button(box, text="Close", command=win.destroy).pack(anchor="e", pady=(14, 0))
+        win.bind("<Escape>", lambda e: win.destroy())
 
     def update_tester(self):
         # the test slice needs a slicer with this printer's profiles

@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from . import REPO_URL, __version__
 from .convert import ConversionError, analyse, convert, default_output, unique_output
 from .printers import BY_KEY, TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
@@ -39,6 +40,7 @@ def _parse_merge(text: str) -> dict[int, int]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="plateshift",
                                      description="Convert Bambu Studio / MakerWorld 3MF projects for other printers, offline.")
+    parser.add_argument("--version", action="version", version=f"PlateShift {__version__} {REPO_URL}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     conv = sub.add_parser("convert", help="convert one or more .3mf projects")
