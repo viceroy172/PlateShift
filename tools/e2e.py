@@ -35,19 +35,25 @@ SOURCE = {
 }
 
 
-def bambu_project(profiles: Path) -> dict:
+# PLA and PETG can't share one nozzle, so one-nozzle colour printers get this set
+ALL_PLA = ["Bambu PLA Basic @BBL X1C", "Bambu PLA Matte @BBL X1C",
+           "Bambu PLA Basic @BBL X1C", "Bambu PLA Basic @BBL X1C"]
+
+
+def bambu_project(profiles: Path, filament_names: list[str] | None = None) -> dict:
     """the settings a Bambu Studio X1C project with four filaments would carry"""
+    names = filament_names or SOURCE["filaments"]
     lib = ProfileLibrary(profiles, "BBL")
     machine = settings_only(lib.resolve("machine", SOURCE["machine"]))
     process = settings_only(lib.resolve("process", SOURCE["process"]))
-    filaments = [settings_only(lib.resolve("filament", f)) for f in SOURCE["filaments"]]
+    filaments = [settings_only(lib.resolve("filament", f)) for f in names]
     settings = {**machine, **process}
     for key in set().union(*filaments):
         settings[key] = [(f.get(key) or [""])[0] if isinstance(f.get(key), list) else f.get(key, "")
                          for f in filaments]
     settings.update(
         printer_settings_id=SOURCE["machine"], print_settings_id=SOURCE["process"],
-        filament_settings_id=SOURCE["filaments"], filament_colour=SOURCE["colours"],
+        filament_settings_id=names, filament_colour=SOURCE["colours"],
         printer_model=machine.get("printer_model", "Bambu Lab X1 Carbon"),
         version="02.02.00.85", wall_loops="3", sparse_infill_density="25%",
         sparse_infill_pattern="gyroid", enable_support="1")
@@ -58,16 +64,18 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--profiles", type=Path, required=True, help="folder with BBL and target vendors")
     ap.add_argument("--slicer", type=Path, required=True, help="slicer program for test slicing")
-    ap.add_argument("--printers", default="c5p,k1max")
+    ap.add_argument("--printers", default="c5p,ad5x,ad5m,k1max")
     args = ap.parse_args()
 
     failures = 0
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        src = write_project(tmp / "bambu x1c project.3mf", bambu_project(args.profiles),
-                            [[(60 + 40 * i, 128) for i in range(4)]], size=20,
-                            paint={i: paint.encode(i) for i in range(1, 5)})
-        print(f"built {src.name}: 4 painted colours, {SOURCE['machine']}")
+        def project(name, filaments=None):
+            return write_project(tmp / name, bambu_project(args.profiles, filaments),
+                                 [[(60 + 40 * i, 128) for i in range(4)]], size=20,
+                                 paint={i: paint.encode(i) for i in range(1, 5)})
+        mixed, pla = project("bambu x1c project.3mf"), project("bambu x1c all pla.3mf", ALL_PLA)
+        print(f"built two 4-colour {SOURCE['machine']} projects: PLA + PETG, and all PLA")
         for key in args.printers.split(","):
             try:
                 target, root = locate(BY_KEY[key], [args.profiles])
@@ -77,6 +85,13 @@ def main() -> int:
                 continue
             lib = ProfileLibrary(root, target.vendor)
             out = tmp / f"out-{key}.3mf"
+            src = mixed
+            if target.slot == "Slot":  # one nozzle, several colours
+                warned = convert(mixed, tmp / f"mixed-{key}.3mf", target, lib).warnings
+                ok = any("nozzle temperatures" in w for w in warned)
+                print(f"  {'OK ' if ok else 'FAIL'} {key}: PLA + PETG on one nozzle is flagged")
+                failures += not ok
+                src = pla
             report = convert(src, out, target, lib)
             print("\n".join("  " + line for line in report.lines()))
             result = test_slice(Slicer("slicer", args.slicer), out)

@@ -413,6 +413,76 @@ class ConvertTests(unittest.TestCase):
         self.assertNotEqual(s.get("bed_exclude_area"), ["0x0", "18x28"])
         self.assertIn(s.get("bed_exclude_area"), (None, area))
 
+    def test_compatibility_follows_orcas_rules(self):
+        fil = self.tmp / "profiles" / "Testvendor" / "filament"
+        # 1. names no printers: suits every printer of its brand
+        _write(fil / "Testvendor PLA Silk.json", {"name": "Testvendor PLA Silk", "inherits": "Generic PLA @System",
+                                                   "instantiation": "true"})
+        # 2. a condition decides
+        _write(fil / "Not for T.json", {"name": "Not for T", "inherits": "Generic PLA @System",
+                                        "instantiation": "true",
+                                        "compatible_printers_condition": 'printer_model != "Test C5P"'})
+        _write(fil / "Only for T.json", {"name": "Only for T", "inherits": "Generic PLA @System",
+                                         "instantiation": "true",
+                                         "compatible_printers_condition": 'printer_model == "Test C5P"'})
+        _write(fil / "Garbled.json", {"name": "Garbled", "inherits": "Generic PLA @System", "instantiation": "true",
+                                      "compatible_printers_condition": 'printer_model === "Test C5P"'})
+        # the shared library's presets with no list are bases, not offered
+        _write(self.tmp / "profiles" / "OrcaFilamentLibrary" / "filament" / "Library PLA.json",
+               {"name": "Library PLA", "inherits": "Generic PLA @System", "instantiation": "true"})
+        lib = ProfileLibrary(self.tmp / "profiles", "Testvendor")
+        found = {p["name"]: p for p in lib.compatible("filament", MACHINE)}
+        self.assertIn("Testvendor PLA Silk", found)
+        self.assertIn("Only for T", found)
+        self.assertNotIn("Not for T", found)
+        self.assertNotIn("Garbled", found)          # unreadable condition: hidden, not guessed
+        self.assertNotIn("Library PLA", found)
+        self.assertNotIn("Other printer PLA", found)  # lists a different printer
+        self.assertTrue(found["Generic PLA @T"].get("_explicit"))
+        self.assertFalse(found["Testvendor PLA Silk"].get("_explicit"))
+
+    def test_presets_tuned_for_the_printer_beat_brand_wide_ones(self):
+        # "Testvendor PLA Basic" (no printer list) vs "Testvendor PLA Basic @T" (lists the printer):
+        # same name words, the shorter name used to win the tie
+        _write(self.tmp / "profiles" / "Testvendor" / "filament" / "Testvendor PLA Basic.json",
+               {"name": "Testvendor PLA Basic", "inherits": "Generic PLA @System", "instantiation": "true"})
+        lib = ProfileLibrary(self.tmp / "profiles", "Testvendor")
+        src = write_project(self.tmp / "t.3mf", bambu_settings(), [[(128, 128)]])
+        convert(src, self.tmp / "t-out.3mf", TARGET, lib)
+        s = json.loads(read(self.tmp / "t-out.3mf", "Metadata/project_settings.config"))
+        self.assertEqual(s["filament_settings_id"][0], "Testvendor PLA Basic @T")
+
+    def test_mixed_temperatures_on_one_nozzle_are_flagged(self):
+        # PLA 210 and PETG 240 can't share one nozzle; slicers refuse to slice it
+        for name, extra in (("Generic PLA @System", {"nozzle_temperature_range_low": ["190"],
+                                                      "nozzle_temperature_range_high": ["230"]}),
+                            ("Generic PETG @System", {"nozzle_temperature_range_low": ["220"],
+                                                       "nozzle_temperature_range_high": ["260"]})):
+            path = self.tmp / "profiles" / "OrcaFilamentLibrary" / "filament" / f"{name}.json"
+            data = json.loads(path.read_text())
+            data.update(extra)
+            path.write_text(json.dumps(data))
+        one = self.tmp / "profiles" / "Testvendor" / "machine" / f"{MACHINE}.json"
+        machine = json.loads(one.read_text())
+        machine["nozzle_diameter"] = ["0.4"]
+        one.write_text(json.dumps(machine))
+        lib = ProfileLibrary(self.tmp / "profiles", "Testvendor")
+        src = write_project(self.tmp / "mix.3mf", bambu_settings(), [[(128, 128)]])  # PLA, PLA, PETG, PLA
+        report = convert(src, self.tmp / "mix-out.3mf", TARGET, lib)
+        self.assertTrue(any("PLA (210°C) and PETG (240°C)" in w for w in report.warnings), report.warnings)
+        # all PLA: nothing to warn about
+        pla = bambu_settings(filament_type=["PLA"] * 4, filament_settings_id=["Bambu PLA Basic @BBL X1C"] * 4)
+        report = convert(write_project(self.tmp / "pla.3mf", pla, [[(128, 128)]]), self.tmp / "pla-o.3mf", TARGET, lib)
+        self.assertFalse(any("nozzle temperatures" in w for w in report.warnings))
+
+    def test_slot_word_follows_the_printer(self):
+        ifs = Target("i", "IFS printer", "Testvendor", MACHINE, "0.20mm Standard @T", 4, "I", slot="Slot")
+        report = convert(write_project(self.tmp / "s.3mf", bambu_settings(), [[(128, 128)]]),
+                         self.tmp / "s-out.3mf", ifs, self.lib)
+        self.assertTrue(report.lines()[3].startswith("  Slot 1 "))
+        self.assertEqual(TARGET.slot_word, "Toolhead")
+        self.assertEqual(Target("o", "One", "V", "M", "P", 1, "O").slot_word, "Filament")
+
     def test_plate_type_suits_every_filament(self):
         # orca refuses to slice PETG on a Cool Plate (its cool plate temperature is 0)
         petg = self.tmp / "profiles" / "OrcaFilamentLibrary" / "filament" / "Generic PETG @System.json"

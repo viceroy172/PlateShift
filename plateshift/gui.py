@@ -333,7 +333,7 @@ class App:
             child.destroy()
         self.plan_frame.pack(fill="x", before=self.log_frame)
 
-        word = "Toolhead" if target.toolheads > 1 else "Filament"
+        word = target.slot_word
         heads = [str(i) for i in range(1, target.toolheads + 1)]
         box = ttk.LabelFrame(self.plan_frame, text=f" {source.name} ", padding=10)
         box.pack(fill="x")
@@ -377,15 +377,16 @@ class App:
         note = target.note or ("Colours sharing a toolhead print in that toolhead's filament."
                                if target.toolheads > 1 else "")
         ttk.Label(buttons, text=note, foreground=MUTED, wraplength=520).pack(side="left")
-        self.status.configure(text="Check the toolheads and filaments, then Convert.", fg=MUTED,
-                              font=ui_font(9))
+        check = (f"Check the {target.slot_word.lower()}s and their filaments, then Convert."
+                 if target.toolheads > 1 else "Check the filament, then Convert.")
+        self.status.configure(text=check, fg=MUTED, font=ui_font(9))
 
     def current_merge(self) -> list[int]:
         return [int(v.get()) for v in self.merge_vars]
 
     def refresh_heads(self):
         plan, merge = self.plan, self.current_merge()
-        word = "Toolhead" if self.plan_target.toolheads > 1 else "Filament"
+        word = self.plan_target.slot_word
         for child in self.heads_frame.winfo_children():
             child.destroy()
         ttk.Label(self.heads_frame, text=f"{word} presets", font=ui_font(9, "bold")).grid(
@@ -446,7 +447,7 @@ class App:
         menu.tk_popup(widget.winfo_rootx(), widget.winfo_rooty() + widget.winfo_height())
 
     def pick_colour(self, t: int, current: str):
-        word = "toolhead" if self.plan_target.toolheads > 1 else "filament"
+        word = self.plan_target.slot_word.lower()
         _, chosen = colorchooser.askcolor(color=current, parent=self.root, title=f"Colour for {word} {t}")
         if chosen:
             self.set_head_colour(t, chosen.upper())

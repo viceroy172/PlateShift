@@ -12,11 +12,18 @@ file locally.
 Supported targets (more are mostly a matter of adding a line to
 `plateshift/printers.py`):
 
-| Key     | Printer                  | Toolheads | Profiles from |
-|---------|--------------------------|-----------|---------------|
-| `c5p`   | Flashforge Creator 5 Pro | 4         | Flash Studio or OrcaSlicer |
-| `c5`    | Flashforge Creator 5     | 4         | Flash Studio or OrcaSlicer |
-| `k1max` | Creality K1 Max          | 1         | OrcaSlicer or Creality Print |
+| Key       | Printer                  | Colours at once | Profiles from |
+|-----------|--------------------------|-----------------|---------------|
+| `c5p`     | Flashforge Creator 5 Pro | 4 toolheads | Flash Studio or OrcaSlicer |
+| `c5`      | Flashforge Creator 5     | 4 toolheads | Flash Studio or OrcaSlicer |
+| `ad5x`    | Flashforge AD5X          | 4 IFS slots, one nozzle | Flash Studio or OrcaSlicer |
+| `ad5m`    | Flashforge Adventurer 5M | 1 | Flash Studio or OrcaSlicer |
+| `ad5mpro` | Flashforge Adventurer 5M Pro | 1 | Flash Studio or OrcaSlicer |
+| `k1max`   | Creality K1 Max          | 1 | OrcaSlicer or Creality Print |
+
+On one-colour printers every colour prints in the one filament. On the AD5X colours
+swap through one nozzle, so multi-colour prints take a lot longer than on a
+toolchanger like the Creator 5.
 
 ## Requirements
 

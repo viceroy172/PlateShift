@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from . import opc
+from .condition import ConditionError, evaluate
 
 KINDS = ("machine", "process", "filament")
 
@@ -136,6 +137,9 @@ class ProfileLibrary:
         self._user: dict[str, tuple[str, Path]] = {}   # filament name -> (slicer, file)
         self._raw: dict[Path, dict] = {}
         self._resolved: dict[tuple[str, str], dict] = {}
+        # presets from the printer brand's own folder (not the shared library); a
+        # brand preset that names no printers suits all of that brand's printers
+        self._brand: dict[str, set[str]] = {k: set() for k in KINDS}
         for folder in (vendor, SHARED_LIBRARY):
             base = self.root / folder
             packed_file = self.root / f"{folder}.opc"
@@ -147,12 +151,16 @@ class ProfileLibrary:
                 for kind in KINDS:
                     for preset in (packed or {}).get(kind, []):
                         self._packed[kind].setdefault(preset["name"], preset)
+                        if folder == vendor:
+                            self._brand[kind].add(preset["name"])
                 continue
             for kind in KINDS:
                 kind_dir = base / kind
                 if kind_dir.is_dir():
                     for path in sorted(kind_dir.rglob("*.json")):
                         self._files[kind].setdefault(path.stem, []).append(path)
+                        if folder == vendor:
+                            self._brand[kind].add(path.stem)
         # old name -> current name, so presets made before a rename still find their parent
         self._renamed: dict[str, dict[str, str]] = {k: {} for k in KINDS}
         for kind in KINDS:
@@ -244,9 +252,15 @@ class ProfileLibrary:
         return sorted(set(self._files[kind]) | set(self._packed[kind]))
 
     def compatible(self, kind: str, machine_name: str, include_user: bool = False) -> list[dict]:
+        """presets of `kind` that suit the printer, by orca's rules:
+        1. a preset that lists printers suits exactly those (marked _explicit);
+        2. otherwise its compatible_printers_condition decides;
+        3. otherwise a filament from the printer's own brand suits all that brand's printers.
+        Each result is a copy, so marks for this printer don't leak into the cache."""
         names = self.names(kind)
         if include_user and kind == "filament":
             names += [n for n in self._user if not self._system(kind, n)]
+        machine_settings = None
         found = []
         for name in names:
             try:
@@ -255,8 +269,26 @@ class ProfileLibrary:
                 continue
             if str(profile.get("instantiation", "true")).lower() != "true":
                 continue
-            if machine_name in (profile.get("compatible_printers") or []):
-                found.append(profile)
+            listed = profile.get("compatible_printers") or []
+            condition = str(profile.get("compatible_printers_condition") or "").strip()
+            if listed:
+                if machine_name in listed:
+                    found.append(dict(profile, _explicit=True))
+                continue
+            if condition:
+                if machine_settings is None:
+                    machine = self.resolve("machine", machine_name)
+                    machine_settings = dict(settings_only(machine), printer_settings_id=machine_name)
+                try:
+                    suits = evaluate(condition, machine_settings)
+                except (ConditionError, IndexError, ValueError):
+                    suits = False  # unreadable: hide it rather than offer the wrong preset
+                if suits:
+                    found.append(dict(profile))
+                continue
+            root = name if not profile.get("_user") else profile.get("_parent", "")
+            if kind == "filament" and root in self._brand[kind]:
+                found.append(dict(profile))
         return found
 
 

@@ -346,7 +346,9 @@ def choose_filament(candidates: list[dict], source_name: str, source_type: str) 
         have = _tokens(p["name"])
         return (len(want & have) - 0.1 * len(have - want)
                 + (0.5 if ftype(p) == wanted else 0.0)
-                + (0.3 if p["name"].lower().startswith("generic") else 0.0))
+                + (0.3 if p["name"].lower().startswith("generic") else 0.0)
+                # tuned for this printer beats the brand's printer-neutral version
+                + (1.0 if p.get("_explicit") else 0.0))
     best = max(same, key=lambda p: (score(p), -len(p["name"]), p["name"]))
     return best, note
 
@@ -532,6 +534,23 @@ def _slots(plan: Plan, target: Target, lib: ProfileLibrary, overrides: dict[int,
     return chosen, reps
 
 
+def _temperature_clash(filaments: list[dict]) -> str | None:
+    """'PLA (210°C) and PETG (240°C)' when one filament's printing temperature is
+    outside another's recommended range; slicers refuse to mix those on one nozzle"""
+    def temps(f):
+        return (_as_float(f.get("nozzle_temperature"), 0), _as_float(f.get("nozzle_temperature_range_low"), 0),
+                _as_float(f.get("nozzle_temperature_range_high"), 999))
+    for i, a in enumerate(filaments):
+        for b in filaments[i + 1:]:
+            (ta, lo_a, hi_a), (tb, lo_b, hi_b) = temps(a), temps(b)
+            if not (ta and tb):
+                continue
+            if not (lo_b <= ta <= hi_b and lo_a <= tb <= hi_a):
+                return (f"{_first(a.get('filament_type'))} ({ta:.0f}°C) and "
+                        f"{_first(b.get('filament_type'))} ({tb:.0f}°C)")
+    return None
+
+
 def _carry_over(src: dict, out: dict, process: dict, keep: list[str], merge: list[int]) -> list[str]:
     """copy the designer's choices over the target process; returns what differs from it"""
     changed = []
@@ -683,7 +702,7 @@ def _rewrite_settings(src: dict, lib: ProfileLibrary, target: Target, overrides:
     layer_height = _as_float(src.get("layer_height"), 0.2)
     process = choose_process(lib, target, layer_height)
     report.printer, report.process = machine["name"], process["name"]
-    report.slot_word = "Toolhead" if target.toolheads > 1 else "Filament"
+    report.slot_word = target.slot_word
 
     chosen, reps = _slots(plan, target, lib, overrides, colours or {}, report)
 
@@ -704,6 +723,15 @@ def _rewrite_settings(src: dict, lib: ProfileLibrary, target: Target, overrides:
     filament_keys = set().union(*(settings_only(p) for p in plan.candidates)) if plan.candidates else set()
     _tidy_leftovers(out, src, covered, len(plan.filaments), reps, filament_keys)
     _identity(out, lib, machine, process, chosen, changed, [s.colour for s in report.slots])
+
+    one_nozzle = len(_as_list(machine.get("nozzle_diameter"))) <= 1
+    clash = _temperature_clash([settings_only(p) for p in chosen]) if one_nozzle else None
+    if clash:
+        report.warnings.append(
+            f"{clash} need different nozzle temperatures, and this printer has one nozzle. "
+            "Flash Studio and OrcaSlicer refuse to slice that unless 'Remove mixed temperature "
+            "restriction' is turned on in their preferences; better to use materials that suit "
+            "one temperature")
 
     min_lh = _as_float(machine.get("min_layer_height"), 0.0)
     max_lh = _as_float(machine.get("max_layer_height"), 99.0)

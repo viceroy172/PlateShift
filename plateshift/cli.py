@@ -82,7 +82,8 @@ def _err(*parts) -> None:
 
 def _printers() -> int:
     for t in TARGETS:
-        print(f"{t.key:6} {t.label} ({t.toolheads} toolhead{'s' if t.toolheads > 1 else ''})")
+        word = t.slot_word.lower() + ("s" if t.toolheads > 1 else "")
+        print(f"{t.key:8} {t.label} ({t.toolheads} {word})")
     return 0
 
 
@@ -100,13 +101,14 @@ def _inspect(path: Path, target, lib) -> int:
         _err(exc)
         return 1
     total = sum(f.usage for f in plan.filaments) or 1
+    word = target.slot_word.lower()
     print(f"{path.name}: {len(plan.filaments)} colours, {target.label} has {target.toolheads}")
     for f, t in zip(plan.filaments, plan.merge, strict=True):
         use = f"{100 * f.usage / total:3.0f}%" if f.used else "unused"
-        print(f"  colour {f.index} {f.colour} {use:>6}  {f.name} ({f.type}) -> toolhead {t}")
+        print(f"  colour {f.index} {f.colour} {use:>6}  {f.name} ({f.type}) -> {word} {t}")
     for t in plan.toolheads():
         note = f"  [{plan.notes[t]}]" if plan.notes.get(t) else ""
-        print(f"  toolhead {t}: {plan.presets[t]}{note}")
+        print(f"  {word} {t}: {plan.presets[t]}{note}")
     return 0
 
 
