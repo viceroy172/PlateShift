@@ -64,7 +64,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--profiles", type=Path, required=True, help="folder with BBL and target vendors")
     ap.add_argument("--slicer", type=Path, required=True, help="slicer program for test slicing")
-    ap.add_argument("--printers", default="c5p,ad5x,ad5m,k1max")
+    ap.add_argument("--printers", default="c5p,ad5x,ad5m,k1max,k1maxcfs,k1cfs,k2plus")
     args = ap.parse_args()
 
     failures = 0

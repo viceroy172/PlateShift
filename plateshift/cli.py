@@ -7,7 +7,7 @@ from pathlib import Path
 from .convert import ConversionError, analyse, convert, default_output, unique_output
 from .printers import BY_KEY, TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
-from .slicers import find_slicers, test_slicer
+from .slicers import CAN_TEST, find_slicers, test_slicer
 from .testslice import run as test_slice
 
 
@@ -83,7 +83,7 @@ def _err(*parts) -> None:
 def _printers() -> int:
     for t in TARGETS:
         word = t.slot_word.lower() + ("s" if t.toolheads > 1 else "")
-        print(f"{t.key:8} {t.label} ({t.toolheads} {word})")
+        print(f"{t.key:13} {t.label} ({t.toolheads} {word})")
     return 0
 
 
@@ -126,9 +126,11 @@ def _convert(args, target, lib) -> int:
     if args.output and args.output.suffix.lower() == ".3mf" and len(args.files) > 1:
         _err("-o names one file, but several were given; use a folder instead.")
         return 2
-    tester = test_slicer({s.label: s for s in find_slicers()}) if args.test_slice else None
+    tester = test_slicer({s.label: s for s in find_slicers()}, target) if args.test_slice else None
     if args.test_slice and not tester:
-        _err("Neither Flash Studio nor OrcaSlicer was found, so --test-slice can't run.")
+        needs = " or ".join(n for n in target.slicers if n in CAN_TEST)
+        _err(f"{needs} wasn't found, so --test-slice can't run." if needs else
+             f"Only Creality Print has the {target.label}, and it can't test slice; leave out --test-slice.")
         return 2
 
     failures = 0

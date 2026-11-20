@@ -67,7 +67,10 @@ def _run(slicer, project: Path, timeout: int) -> SliceResult:
             return SliceResult(False, error=str(exc))
         files = sorted(Path(out).glob("*.gcode"))
         if proc.returncode != 0 or not files:
-            return SliceResult(False, error=_why(proc.stdout + proc.stderr))
+            # orca writes the reason for refusing a plate to this log, not its output
+            log = Path(out) / "00000.log"
+            reason = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+            return SliceResult(False, error=_why(reason + "\n" + proc.stdout + proc.stderr))
         result = SliceResult(True, plates=len(files))
         for f in files:
             with open(f, encoding="utf-8", errors="replace") as fh:
@@ -79,11 +82,16 @@ def _run(slicer, project: Path, timeout: int) -> SliceResult:
         return result
 
 
+# lines with "error" in them that aren't the reason a slice failed
+_NOISE = ("opengl", "glfw", "glad", "placeable", "lost branch", "ff_crash_trace", "found slicing or export error",
+          "cli::run found error")
+
+
 def _why(log: str) -> str:
     lines = [l.strip() for l in log.splitlines() if l.strip()]
     for i, line in enumerate(lines):
-        if "error" in line.lower() and "opengl" not in line.lower() and "glfw" not in line.lower() \
-                and "glad" not in line.lower() and "Placeable" not in line:
+        lower = line.lower()
+        if ("error" in lower or "conflict" in lower) and not any(n in lower for n in _NOISE):
             text = re.sub(r"^\[[^\]]*\]\s*\[[^\]]*\]\s*\[\w+\]\s*", "", line)
             if text.endswith(":") and i + 1 < len(lines):
                 text += " " + lines[i + 1]

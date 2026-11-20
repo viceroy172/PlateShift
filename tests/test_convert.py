@@ -15,8 +15,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from make_project import bambu_settings, write_project  # noqa: E402
 from plateshift import paint  # noqa: E402
-from plateshift.convert import (ConversionError, _drop_gcode_rels, _plate_centre,  # noqa: E402
-                                _plate_columns, analyse, convert, unique_output)
+from plateshift.convert import (ConversionError, _clear_prime_towers, _depth_for_height,  # noqa: E402
+                                _drop_gcode_rels, _filament_lists, _overlaps, _plate_centre, _plate_columns, _tower_size, analyse,
+                                convert, unique_output)
 from plateshift.printers import BY_KEY, Target  # noqa: E402
 from plateshift.profiles import ProfileLibrary, locate  # noqa: E402
 
@@ -301,8 +302,10 @@ class ConvertTests(unittest.TestCase):
         settings = bambu_settings(bed=180, wipe_tower_x=["90", "170"], wipe_tower_y=["45"],
                                   prime_tower_width="35")
         _, _, s = self.convert(settings)
-        # 170 scales to 241.8; kept on the bed with room for the brim: 256 - 35 - 3 - 5
-        self.assertEqual(s["wipe_tower_x"], ["128", "213"])
+        # 170 scales to 241.8; kept on the bed with room for the tower, its brim and a gap
+        side, _, brim = _tower_size(s, len(s["filament_colour"]))
+        self.assertEqual(s["wipe_tower_x"][0], "128")
+        self.assertAlmostEqual(float(s["wipe_tower_x"][1]), 256 - side - brim - 5, places=2)
         self.assertEqual(s["wipe_tower_y"], ["64", "64"])  # one per plate, like x
 
     def test_bed_type_comes_from_the_printer(self):
@@ -527,6 +530,85 @@ class ConvertTests(unittest.TestCase):
 @unittest.skipUnless(
     any((r / "Flashforge" / "machine").is_dir() for r in __import__("plateshift.profiles", fromlist=["x"]).default_profile_roots()),
     "Flash Studio / OrcaSlicer Flashforge profiles are not installed")
+class FilamentListTests(unittest.TestCase):
+    def test_a_setting_one_preset_lacks_is_never_left_empty(self):
+        # found by the k2 plus e2e run: "1,,1,1" made orca refuse the project
+        out = {}
+        chosen = [{"name": "a", "activate_chamber_temp_control": ["1"]}, {"name": "b"},
+                  {"name": "c", "activate_chamber_temp_control": ["1"]}]
+        _filament_lists(out, {}, chosen, [0, 1, 2])
+        self.assertEqual(out["activate_chamber_temp_control"], ["1", "1", "1"])
+
+    def test_the_project_value_comes_first(self):
+        out = {}
+        chosen = [{"name": "a", "chamber_temperature": ["40"]}, {"name": "b"}]
+        _filament_lists(out, {"chamber_temperature": ["0", "35"]}, chosen, [0, 1])
+        self.assertEqual(out["chamber_temperature"], ["40", "35"])
+
+
+def _square(x0, y0, x1, y1):
+    return [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+
+
+class PrimeTowerTests(unittest.TestCase):
+    TOWER = {"prime_tower_width": "35", "prime_volume": "45", "layer_height": "0.2",
+             "prime_tower_brim_width": "3", "enable_prime_tower": "1"}
+
+    def test_tower_is_square_whatever_its_width(self):
+        narrow = _tower_size(dict(self.TOWER), 4)
+        wide = _tower_size(dict(self.TOWER, prime_tower_width="180"), 4)
+        self.assertEqual(narrow[0], narrow[1])
+        self.assertAlmostEqual(narrow[0], wide[0])
+
+    def test_flushing_into_the_tower_makes_it_bigger(self):
+        flush = dict(self.TOWER, flush_volumes_matrix=["0", "280", "280", "0"], flush_multiplier=["1"])
+        kept_out = _tower_size(dict(flush, purge_in_prime_tower="0"), 4)[0]
+        purged = _tower_size(dict(flush, purge_in_prime_tower="1"), 4)[0]
+        self.assertGreater(purged, kept_out * 2)
+        # orca made this tower about 65 mm square for the CFS profiles
+        self.assertTrue(66 < purged < 85, purged)
+
+    def test_tall_towers_are_deeper(self):
+        self.assertEqual(_depth_for_height(0), 0)
+        self.assertAlmostEqual(_depth_for_height(175), 30)
+        self.assertEqual(_depth_for_height(500), 60)
+
+    def test_tower_on_an_object_moves_to_a_clear_spot(self):
+        settings = dict(self.TOWER, wipe_tower_x=["100"], wipe_tower_y=["100"])
+        model = (0, _square(80, 80, 180, 180), 50.0)
+        self.assertEqual(_clear_prime_towers(settings, (0, 0, 256, 256), [model], 4), [])
+        x, y = float(settings["wipe_tower_x"][0]), float(settings["wipe_tower_y"][0])
+        side, _, brim = _tower_size(settings, 4, 50.0)
+        gap = brim + 5
+        clear = x + side + gap <= 80 or x - gap >= 180 or y + side + gap <= 80 or y - gap >= 180
+        self.assertTrue(clear, (x, y))
+
+    def test_a_clear_tower_stays_put(self):
+        settings = dict(self.TOWER, wipe_tower_x=["20"], wipe_tower_y=["20"])
+        _clear_prime_towers(settings, (0, 0, 256, 256), [(0, _square(150, 150, 200, 200), 50.0)], 4)
+        self.assertEqual((settings["wipe_tower_x"], settings["wipe_tower_y"]), (["20"], ["20"]))
+
+    def test_no_room_is_reported_per_plate(self):
+        settings = dict(self.TOWER, wipe_tower_x=["20", "20"], wipe_tower_y=["20"])
+        everything = (0, _square(10, 10, 246, 246), 50.0)
+        self.assertEqual(_clear_prime_towers(settings, (0, 0, 256, 256), [everything], 4), [0])
+
+    def test_a_tower_in_the_empty_corner_of_a_round_object_stays(self):
+        # a diamond fills only half its bounding box; the tower sits in a corner it leaves free
+        diamond = [(150, 50), (250, 150), (150, 250), (50, 150)]
+        settings = dict(self.TOWER, wipe_tower_x=["200"], wipe_tower_y=["20"])
+        _clear_prime_towers(settings, (0, 0, 256, 256), [(0, diamond, 50.0)], 4)
+        self.assertEqual((settings["wipe_tower_x"], settings["wipe_tower_y"]), (["200"], ["20"]))
+        self.assertTrue(_overlaps((140, 140, 160, 160), diamond))
+        self.assertFalse(_overlaps((200, 0, 256, 60), diamond))
+
+    def test_single_colour_has_no_tower_to_move(self):
+        settings = dict(self.TOWER, wipe_tower_x=["100"], wipe_tower_y=["100"])
+        self.assertEqual(_clear_prime_towers(settings, (0, 0, 256, 256), [(0, _square(0, 0, 256, 256), 9.0)], 1),
+                         [])
+        self.assertEqual(settings["wipe_tower_x"], ["100"])
+
+
 class InstalledProfilesTest(unittest.TestCase):
     # uses the real installed Flashforge presets
 

@@ -585,6 +585,9 @@ def _filament_lists(out: dict, src: dict, chosen: list[dict], reps: list[int]) -
     """one entry per toolhead for every setting the chosen presets define"""
     settings = [settings_only(p) for p in chosen]
     for key in sorted(set().union(*settings)):
+        # a preset without the setting borrows it from the project, or failing that
+        # from another toolhead's preset. an empty entry makes the slicer refuse the file
+        other = next(_first(fs[key]) for fs in settings if key in fs)
         values = []
         for fs, r in zip(settings, reps, strict=True):
             if key in fs:
@@ -592,7 +595,7 @@ def _filament_lists(out: dict, src: dict, chosen: list[dict], reps: list[int]) -
             else:
                 fallback = src.get(key)
                 values.append(fallback[r] if isinstance(fallback, list) and r < len(fallback)
-                              else _first(fallback) if fallback is not None else "")
+                              else _first(fallback) if fallback is not None else other)
         out[key] = values
     return settings
 
@@ -835,19 +838,125 @@ def _move_prime_towers(settings: dict, old_box, new_box) -> None:
         settings[key] = moved
 
 
+TOWER_GAP = 5.0
+
+
+def _has_prime_tower(settings: dict, filaments: int) -> bool:
+    return filaments >= 2 and str(settings.get("enable_prime_tower", "1")) not in ("0", "false")
+
+
+# slicers make tall prime towers deeper so they don't topple: (height, depth) mm
+TOWER_DEPTH_BY_HEIGHT = ((5.0, 0.0), (100.0, 20.0), (250.0, 40.0), (350.0, 60.0))
+
+
+def _depth_for_height(height: float) -> float:
+    points = TOWER_DEPTH_BY_HEIGHT
+    if height <= points[0][0]:
+        return points[0][1]
+    for (h0, d0), (h1, d1) in zip(points, points[1:]):
+        if height <= h1:
+            return d0 + (height - h0) / (h1 - h0) * (d1 - d0)
+    return points[-1][1]
+
+
+def _tower_size(settings: dict, filaments: int, height: float = 0.0) -> tuple[float, float, float]:
+    """(width, depth, brim) of the prime tower on the bed, estimated generously.
+    orca builds a square tower holding a layer's purging, so its size hardly
+    depends on the width setting: creality's cfs profiles ask for 180 mm and get
+    a tower about 65 mm square"""
+    width = _as_float(settings.get("prime_tower_width"), 35.0)
+    brim = max(_as_float(settings.get("prime_tower_brim_width"), 3.0), 3.0)
+    layer = max(_as_float(settings.get("layer_height"), 0.2), 0.05)
+    # every toolhead priming on one layer
+    volume = _as_float(settings.get("prime_volume"), 45.0) * filaments
+    if str(settings.get("purge_in_prime_tower", "0")) not in ("0", "false"):
+        # and flushing the colour before it, on printers that purge into the tower
+        flushes = [_as_float(v, 0.0) for v in _as_list(settings.get("flush_volumes_matrix"))]
+        multiplier = _as_float((_as_list(settings.get("flush_multiplier")) or ["1"])[0], 1.0)
+        volume += max(flushes, default=0.0) * multiplier * (filaments - 1)
+    # tall towers are made deeper so they stand up
+    side = 1.15 * max((volume / layer) ** 0.5, (width * _depth_for_height(height)) ** 0.5, 15.0)
+    return side, side, brim
+
+
+def _clear_prime_towers(settings: dict, box, objects, filaments: int) -> list[int]:
+    """move any plate's prime tower that sits on an object, or off the bed, to the
+    nearest clear spot. objects: (plate, outline, height), the outline being the
+    object's convex outline from above, anticlockwise in bed coordinates. a smaller bed squeezes objects together, and the slicer refuses a
+    tower that runs into one. returns the plates with no room for a tower"""
+    if not _has_prime_tower(settings, filaments):
+        return []
+    xs, ys = _as_list(settings.get("wipe_tower_x")), _as_list(settings.get("wipe_tower_y"))
+    if not xs or not ys:
+        return []
+    x0, y0, x1, y1 = box
+    crowded = []
+    for plate in range(max(len(xs), len(ys))):
+        outlines = [b for p, b, _ in objects if p == plate]
+        height = max((h for p, _, h in objects if p == plate), default=0.0)
+        width, depth, brim = _tower_size(settings, filaments, height)
+        pad = brim + TOWER_GAP
+        lo_x, hi_x = x0 + pad, x1 - width - pad
+        lo_y, hi_y = y0 + pad, y1 - depth - pad
+
+        def clear(x, y):
+            # positions are stored rounded, so allow a hair over the edge
+            return lo_x - 0.01 <= x <= hi_x + 0.01 and lo_y - 0.01 <= y <= hi_y + 0.01 and not any(
+                _overlaps((x - pad, y - pad, x + width + pad, y + depth + pad), b) for b in outlines)
+
+        x, y = _as_float(xs[min(plate, len(xs) - 1)]), _as_float(ys[min(plate, len(ys) - 1)])
+        if clear(x, y):
+            continue
+        spots = [(abs(cx - x) + abs(cy - y), cx, cy) for cx in _steps(lo_x, hi_x) for cy in _steps(lo_y, hi_y)
+                 if clear(cx, cy)]
+        if not spots:
+            crowded.append(plate)
+            continue
+        _, x, y = min(spots)
+        xs += [xs[-1]] * (plate + 1 - len(xs))
+        ys += [ys[-1]] * (plate + 1 - len(ys))
+        xs[plate], ys[plate] = _mm(x), _mm(y)
+    settings["wipe_tower_x"], settings["wipe_tower_y"] = xs, ys
+    return crowded
+
+
+def _overlaps(rect, outline) -> bool:
+    """does the rectangle (x0, y0, x1, y1) overlap the anticlockwise convex outline"""
+    if not outline:
+        return False
+    x0, y0, x1, y1 = rect
+    xs, ys = [p[0] for p in outline], [p[1] for p in outline]
+    if max(xs) <= x0 or min(xs) >= x1 or max(ys) <= y0 or min(ys) >= y1:
+        return False
+    if len(outline) < 3:
+        return True
+    corners = ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+    for (ax, ay), (bx, by) in zip(outline, outline[1:] + outline[:1]):
+        # every corner outside this edge: the edge's line separates them
+        if all((bx - ax) * (cy - ay) - (by - ay) * (cx - ax) <= 0 for cx, cy in corners):
+            return False
+    return True
+
+
+def _steps(lo: float, hi: float) -> list[float]:
+    if hi < lo:
+        return []
+    n = max(1, int((hi - lo) // 5))
+    return [lo + (hi - lo) * i / n for i in range(n + 1)]
+
+
+def _mm(v: float) -> str:
+    return f"{v:.3f}".rstrip("0").rstrip(".")
+
+
 def _fit_prime_towers(settings: dict, box, plate_count: int, filaments: int) -> None:
     """keep every plate's prime tower on the bed. a position chosen for a bambu
     tower can push a bigger multi-toolhead tower off the edge, and with no
     position at all orca's default (15, 220) is too far back on a 256 mm bed"""
-    if filaments < 2 or str(settings.get("enable_prime_tower", "1")) in ("0", "false"):
+    if not _has_prime_tower(settings, filaments):
         return
-    width = _as_float(settings.get("prime_tower_width"), 35.0)
-    brim = max(_as_float(settings.get("prime_tower_brim_width"), 3.0), 3.0)
-    volume = _as_float(settings.get("prime_volume"), 45.0)
-    layer = max(_as_float(settings.get("layer_height"), 0.2), 0.05)
-    # generous estimate of the tower's depth: every toolhead purging each layer
-    depth = max(width, volume * filaments / (layer * width))
-    margin = 5.0
+    width, depth, brim = _tower_size(settings, filaments)
+    margin = TOWER_GAP
     x0, y0, x1, y1 = box
     xs = _as_list(settings.get("wipe_tower_x")) or ["15"]
     ys = _as_list(settings.get("wipe_tower_y")) or ["220"]
@@ -956,6 +1065,19 @@ class _Conversion:
                               info)
             self.replacements[SLICE_INFO] = info.encode("utf-8")
 
+    def clear_prime_towers(self, settings: dict, new_box, plate_of, plate_count, filaments: int) -> None:
+        if MAIN_MODEL not in self.models or not _has_prime_tower(settings, filaments):
+            return
+        columns = _plate_columns(plate_count)
+        try:
+            objects = fit.footprints(self.models, MAIN_MODEL, plate_of,
+                                     lambda i: _plate_centre(i, columns, new_box), new_box)
+        except (ValueError, KeyError, IndexError, ET.ParseError):
+            return
+        for plate in _clear_prime_towers(settings, new_box, objects, filaments):
+            self.report.warnings.append(
+                f"no room for the prime tower on plate {plate + 1}; move an object or the tower in the slicer")
+
     def check_fit(self, settings: dict, new_box, plate_of, plate_count) -> None:
         if MAIN_MODEL not in self.models:
             return
@@ -1059,6 +1181,7 @@ def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
         plate_of, plate_count = _plate_of_instances(job.model_settings)
         job.relocate(settings, old_box, new_box, plate_of, plate_count)
         _fit_prime_towers(settings, new_box, plate_count, max(plan.merge))
+        job.clear_prime_towers(settings, new_box, plate_of, plate_count, max(plan.merge))
         job.relabel(src, settings)
         job.check_fit(settings, new_box, plate_of, plate_count)
         job.drop_gcode()

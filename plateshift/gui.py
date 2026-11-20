@@ -16,7 +16,7 @@ from .convert import (ConversionError, analyse, convert, default_output, lead_co
                       unique_output)
 from .printers import TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
-from .slicers import Slicer, find_slicers, open_in, test_slicer
+from .slicers import CAN_TEST, Slicer, find_slicers, open_in, test_slicer
 from .slicers import show_in_folder as reveal
 from .testslice import run as test_slice
 
@@ -88,7 +88,7 @@ class App:
         self.settings = load_settings()
         self.settings.pop("open_in", None)  # old single choice, now per printer
         self.slicers: dict[str, Slicer] = {s.label: s for s in find_slicers()}
-        self.tester = test_slicer(self.slicers)
+        self.tester: Slicer | None = None
         root.title("PlateShift")
         root.minsize(680, 460)
         # tk's stock linux look is dated; clam is built in and much cleaner.
@@ -125,13 +125,10 @@ class App:
         self._quiet = False
         self.printer.trace_add("write", lambda *_: self.printer_changed())
 
-        self.check = tk.BooleanVar(value=bool(self.settings.get("test_slice", True)) and bool(self.tester))
-        self.checker = ttk.Checkbutton(top, variable=self.check,
-                                       text=f"Test slice with {self.tester.label} afterwards" if self.tester
-                                       else "Test slice (needs Flash Studio or OrcaSlicer)")
+        self.check = tk.BooleanVar(value=bool(self.settings.get("test_slice", True)))
+        self.checker = ttk.Checkbutton(top, variable=self.check)
         self.checker.grid(row=2, column=1, sticky="w", padx=8, pady=(6, 0))
-        if not self.tester:
-            self.checker.configure(state="disabled")
+        self.update_tester()
 
         self.open_choice.trace_add("write", lambda *_: self.remember(slicer=True))
         for var in (self.printer, self.check):
@@ -463,8 +460,21 @@ class App:
             save_settings(self.settings)
         self.refresh_heads()
 
+    def update_tester(self):
+        # the test slice needs a slicer with this printer's profiles
+        target = self.target()
+        self.tester = test_slicer(self.slicers, target)
+        if self.tester:
+            self.checker.configure(text=f"Test slice with {self.tester.label} afterwards",
+                                   state="disabled" if self.busy else "normal")
+        else:
+            needs = " or ".join(n for n in target.slicers if n in CAN_TEST)
+            self.checker.configure(text=f"Test slice (needs {needs})" if needs
+                                   else "Test slice (not possible with Creality Print)", state="disabled")
+
     def printer_changed(self):
         self.update_slicer_choices()
+        self.update_tester()
         # a panel built for the old printer has the wrong toolheads and presets
         if getattr(self, "plan", None) is not None and not self.busy:
             source = self.plan_source

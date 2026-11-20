@@ -52,6 +52,20 @@ class MacAppTests(unittest.TestCase):
         self.assertIs(slicers.test_slicer({"OrcaSlicer": orca}), orca)
         self.assertIsNone(slicers.test_slicer({}))
 
+    def test_creality_printers_test_slice_in_orca(self):
+        from plateshift.printers import BY_KEY
+        orca = slicers.Slicer("OrcaSlicer", Path("orca"))
+        flash = slicers.Slicer("Flash Studio", Path("flash"))
+        creality = slicers.Slicer("Creality Print", Path("cp"))
+        found = {"OrcaSlicer": orca, "Flash Studio": flash, "Creality Print": creality}
+        self.assertIs(slicers.test_slicer(found, BY_KEY["k2plus"]), orca)
+        self.assertIs(slicers.test_slicer(found, BY_KEY["c5p"]), flash)
+        # flash studio hasn't got creality's profiles, and creality print can't test slice
+        self.assertIsNone(slicers.test_slicer({"Flash Studio": flash, "Creality Print": creality},
+                                              BY_KEY["k1maxcfs"]))
+        # only creality print has this printer
+        self.assertIsNone(slicers.test_slicer(found, BY_KEY["k1max2025cfs"]))
+
 
 if __name__ == "__main__":
     unittest.main()

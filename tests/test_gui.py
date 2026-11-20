@@ -30,6 +30,8 @@ from plateshift.profiles import ProfileLibrary  # noqa: E402
 
 FOUR = Target("four", "Four heads", "Testvendor", MACHINE, "0.20mm Standard @T", 4, "Four")
 ONE = Target("one", "One head", "Testvendor", MACHINE, "0.20mm Standard @T", 1, "One")
+CREALITY = Target("cfs", "Slots", "Testvendor", MACHINE, "0.20mm Standard @T", 4, "Slots",
+                  slicers=("Creality Print", "OrcaSlicer"), slot="Slot")
 
 
 @unittest.skipUnless(HAVE_TK, "needs Tk and a display")
@@ -40,7 +42,7 @@ class WindowTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         lib = ProfileLibrary(make_profiles(self.tmp / "profiles"), "Testvendor")
         self.saved = (gui.TARGETS, gui._settings_file, gui.find_slicers)
-        gui.TARGETS = [FOUR, ONE]
+        gui.TARGETS = [FOUR, ONE, CREALITY]
         gui._settings_file = lambda: self.tmp / "settings.json"
         gui.find_slicers = lambda: []
         (self.tmp / "settings.json").write_text(json.dumps({"printer": ONE.label, "test_slice": False}))
@@ -73,6 +75,20 @@ class WindowTests(unittest.TestCase):
 
     def panel_ready(self):
         return getattr(self.app, "plan", None) is not None and not self.app.busy
+
+    def test_test_slicer_follows_the_printer(self):
+        app = self.app
+        self.assertEqual(str(app.checker.cget("state")), "disabled")  # no slicers found
+        flash = self.gui.Slicer("Flash Studio", Path("flash"))
+        app.slicers = {"Flash Studio": flash}
+        app.printer.set(FOUR.label)
+        self.assertIs(app.tester, flash)
+        self.assertIn("Flash Studio", str(app.checker.cget("text")))
+        # flash studio hasn't got this printer's profiles
+        app.printer.set(CREALITY.label)
+        self.assertIsNone(app.tester)
+        self.assertEqual(str(app.checker.cget("text")), "Test slice (needs OrcaSlicer)")
+        self.assertEqual(str(app.checker.cget("state")), "disabled")
 
     def test_changing_printer_rebuilds_the_panel_for_it(self):
         # found by hand: panel kept the old printer's single toolhead and presets

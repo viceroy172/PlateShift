@@ -215,9 +215,19 @@ def find_slicers() -> list[Slicer]:
     return []
 
 
-def test_slicer(slicers: dict[str, Slicer]) -> Slicer | None:
-    """the slicer used for test slicing: flash studio where there is one, else orca"""
-    return slicers.get("Flash Studio") or slicers.get("OrcaSlicer")
+# creality print's command line opens and then sits there, so it can't test slice
+CAN_TEST = ("Flash Studio", "OrcaSlicer")
+
+
+def test_slicer(slicers: dict[str, Slicer], target=None) -> Slicer | None:
+    """the slicer used for test slicing: the first of the target's slicers that can
+    slice from the command line (flash studio for flashforge printers). None for a
+    printer only creality print has profiles for"""
+    wanted = target.slicers if target is not None else CAN_TEST
+    for name in [n for n in wanted if n in CAN_TEST]:
+        if name in slicers:
+            return slicers[name]
+    return None
 
 
 def open_in(slicer: Slicer, file: Path) -> None:

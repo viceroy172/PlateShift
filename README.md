@@ -19,17 +19,24 @@ Supported targets (more are mostly a matter of adding a line to
 | `ad5x`    | Flashforge AD5X          | 4 IFS slots, one nozzle | Flash Studio or OrcaSlicer |
 | `ad5m`    | Flashforge Adventurer 5M | 1 | Flash Studio or OrcaSlicer |
 | `ad5mpro` | Flashforge Adventurer 5M Pro | 1 | Flash Studio or OrcaSlicer |
-| `k1max`   | Creality K1 Max          | 1 | OrcaSlicer or Creality Print |
+| `k1`, `k1c`, `k1se`, `k1max` | Creality K1, K1C, K1 SE, K1 Max | 1 | OrcaSlicer or Creality Print |
+| `k1cfs`, `k1ccfs`, `k1secfs`, `k1maxcfs` | the same with the CFS | 4 CFS slots, one nozzle | OrcaSlicer or Creality Print |
+| `k1c2025cfs`, `k1max2025cfs` | Creality K1C 2025, K1 Max 2025 with the CFS | 4 CFS slots, one nozzle | Creality Print |
+| `k2`, `k2plus`, `k2pro`, `k2se` | Creality K2, K2 Plus, K2 Pro, K2 SE | 4 CFS slots, one nozzle | OrcaSlicer or Creality Print |
+| `sparkxi7` | Creality SparkX i7 | 4 slots, one nozzle | OrcaSlicer or Creality Print |
+| `sparkxi8` | Creality SparkX i8 | 4 slots, one nozzle | Creality Print |
 
-On one-colour printers every colour prints in the one filament. On the AD5X colours
-swap through one nozzle, so multi-colour prints take a lot longer than on a
-toolchanger like the Creator 5.
+On one-colour printers every colour prints in the one filament. On the AD5X and the
+Creality CFS printers colours swap through one nozzle, so multi-colour prints take a
+lot longer than on a toolchanger like the Creator 5. The K2 series assumes one CFS
+(4 colours); projects with more colours are merged down to 4. The Creality K3 isn't
+supported yet because no slicer ships a profile for it.
 
 ## Requirements
 
 - Windows, Linux or macOS
 - A slicer that has the printer's profiles: Flash Studio or OcraSlicer for the
-  Flashforge printers, OrcaSlicer or Creality Print for the K1 Max. OrcaSlicer 2.4
+  Flashforge printers, OrcaSlicer or Creality Print for the Creality ones. OrcaSlicer 2.4
   and later packs its profiles into `.opc` files; PlateShift reads those directly.
 - On Windows, `PlateShift.exe`; on macOS, `PlateShift.app`. Both need nothing else
   installed. Running from source instead needs Python 3.11 or newer with Tk
@@ -115,12 +122,14 @@ changes the colour the slicer shows, not what gets printed. Projects with more c
 printer has toolheads start with the closest colours already merged. Several files
 at once are matched automatically.
 
-**Test slice** runs Flash Studio (or OrcaSlicer, where there's no Flash Studio) in
-the background after converting and adds the print time and filament weight to the
-report, or the error if it won't slice.
+**Test slice** runs Flash Studio for the Flashforge printers and OrcaSlicer for the
+Creality ones (or OrcaSlicer wherever Flash Studio isn't installed) in the background
+after converting, and adds the print time and filament weight to the report, or the
+error if it won't slice. Creality Print can't slice from the command line, so testing a
+Creality conversion needs OrcaSlicer.
 **Then open in** opens a single converted file in a slicer that has the printer's
 profiles: Flash Studio or OrcaSlicer for the Flashforge printers, Creality Print or
-OrcaSlicer for the K1 Max. The choice is remembered per printer in
+OrcaSlicer for the Creality ones. The choice is remembered per printer in
 `%APPDATA%\PlateShift\settings.json` (`~/.config/plateshift/settings.json` on Linux and macOS).
 
 **Command line:**
@@ -148,7 +157,7 @@ converted settings behind.
 | Filaments | Each toolhead gets the closest target preset of the same material, matched on type and name (Basic, Silk, Matte, CF…), or the one you pick, and keeps the project's colour |
 | Painted colours | Rewritten triangle by triangle when colours are merged or moved to another toolhead, along with each object's filament, layer colour changes and support filament |
 | Models, per-object settings, plates | Copied unchanged |
-| Object positions | If the bed is a different size, objects and prime towers are moved so they stay where they were on their plate. Anything that then hangs off a plate or is too tall gets a warning |
+| Object positions | If the bed is a different size, objects and prime towers are moved so they stay where they were on their plate. A prime tower that would then run into an object is moved to the nearest clear spot. Anything that hangs off a plate, is too tall or leaves no room for the tower gets a warning |
 | Sliced G-code | Removed, because it was made for the original printer |
 | Bambu Studio 2.x extras | Per-nozzle-type lists are cut to the standard nozzle, `#D6B685FF` colours become `#D6B685`, Bambu-only options are dropped |
 | Version label | Files from a newer Bambu Studio are labelled the way Flash Studio labels its own projects, so it opens them without a version warning |
@@ -159,7 +168,7 @@ The original file is never modified.
 
 - Your own printer presets are never used. They hold things like the printer's IP
   address and access key, which shouldn't end up in a project file.
-- K1 Max projects use OrcaSlicer's profiles when OrcaSlicer is installed, otherwise
+- Creality projects use OrcaSlicer's profiles when OrcaSlicer is installed, otherwise
   Creality Print's. The two name the printer differently, so a project opened in the
   other slicer shows up as a project printer.
 - Settings outside the carry-over list fall back to the target's values, so niche
@@ -167,6 +176,14 @@ The original file is never modified.
 - Only the 0.4 mm nozzle presets are targeted.
 - OrcaSlicer's time estimate for the Creator 5 differs a lot from Flash Studio's;
   trust Flash Studio's for that printer.
+- The test slice fails for the Creality K2 and SparkX i7: OrcaSlicer's own profiles for
+  them set a cutter retraction its command line rejects as out of range. PlateShift
+  leaves the printer's value as Creality set it.
+- The K1C 2025, K1 Max 2025 and SparkX i8 are only in Creality Print, which can't
+  slice from the command line, so they can't be test sliced.
+- On the Creality CFS printers the prime tower is large (around 65 mm square), so a
+  model that nearly fills the bed leaves no room for it. PlateShift warns when that
+  happens.
 - Check the first layer and supports in the the slicer before printing anything large.
 
 ## How it works
