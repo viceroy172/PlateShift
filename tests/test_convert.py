@@ -527,9 +527,6 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(_plate_centre(2, 2, (0, 0, 100, 100)), (50, -70))
 
 
-@unittest.skipUnless(
-    any((r / "Flashforge" / "machine").is_dir() for r in __import__("plateshift.profiles", fromlist=["x"]).default_profile_roots()),
-    "Flash Studio / OrcaSlicer Flashforge profiles are not installed")
 class FilamentListTests(unittest.TestCase):
     def test_a_setting_one_preset_lacks_is_never_left_empty(self):
         # found by the k2 plus e2e run: "1,,1,1" made orca refuse the project
@@ -609,6 +606,9 @@ class PrimeTowerTests(unittest.TestCase):
         self.assertEqual(settings["wipe_tower_x"], ["100"])
 
 
+@unittest.skipUnless(
+    any((r / "Flashforge" / "machine").is_dir() for r in __import__("plateshift.profiles", fromlist=["x"]).default_profile_roots()),
+    "Flash Studio / OrcaSlicer Flashforge profiles are not installed")
 class InstalledProfilesTest(unittest.TestCase):
     # uses the real installed Flashforge presets
 
