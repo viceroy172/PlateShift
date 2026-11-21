@@ -80,10 +80,21 @@ jobs:
           version=$(python -c "import plateshift; print(plateshift.__version__)")
           plutil -replace CFBundleShortVersionString -string "$version" dist/PlateShift.app/Contents/Info.plist
           plutil -replace CFBundleVersion -string "$version" dist/PlateShift.app/Contents/Info.plist
+          # editing Info.plist breaks the signature pyinstaller made, and macOS then
+          # calls the downloaded app "damaged". sign it again (ad hoc) after the edit
+          codesign --verify --deep --strict dist/PlateShift.app \
+            && echo "signature still valid after the plist edit" \
+            || echo "signature broken by the plist edit, re-signing"
+          codesign --force --deep --sign - dist/PlateShift.app
+          codesign --verify --deep --strict --verbose=2 dist/PlateShift.app
       - name: the app runs
         run: dist/PlateShift.app/Contents/MacOS/PlateShift printers
       - name: zip it
-        run: ditto -c -k --keepParent dist/PlateShift.app PlateShift-mac.zip
+        run: |
+          ditto -c -k --keepParent dist/PlateShift.app PlateShift-mac.zip
+          # the zip must unpack to an app whose signature still checks out
+          mkdir unzipped && ditto -x -k PlateShift-mac.zip unzipped
+          codesign --verify --deep --strict --verbose=2 unzipped/PlateShift.app
       - uses: actions/upload-artifact@v4
         with:
           name: PlateShift-mac
