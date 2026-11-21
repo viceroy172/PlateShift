@@ -187,6 +187,8 @@ class App:
                               text="Choose files, or drop .3mf files on this window. Converted copies are "
                                    "saved next to the originals; open them with File → Open Project.")
         self.hint.pack(fill="x")
+        # wrap rather than cut off when the window is narrow
+        self.hint.bind("<Configure>", lambda e: self.hint.configure(wraplength=max(200, e.width - 24)))
 
         self.plan_frame = ttk.Frame(root, padding=(12, 6, 12, 0))
 
@@ -416,6 +418,9 @@ class App:
 
         self.heads_frame = ttk.Frame(box)
         self.heads_frame.pack(side="left", fill="both", expand=True, anchor="n")
+        # the preset boxes take whatever room there is, so a narrow window (or the
+        # mac's bigger fonts) doesn't push them off the edge
+        self.heads_frame.columnconfigure(2, weight=1)
         options = sorted(plan.candidates, key=lambda p: (not p.get("_user"), p["name"].lower()))
         self.preset_names = {_display(p): p["name"] for p in options}
         self.head_vars: dict[int, tk.StringVar] = {}
@@ -467,7 +472,7 @@ class App:
                 var.set(by_name.get(name, ""))
                 self._quiet = False
             ttk.Combobox(self.heads_frame, textvariable=var, values=list(self.preset_names),
-                         width=48, state="readonly").grid(row=row, column=2, sticky="we", padx=(8, 0), pady=1)
+                         width=30, state="readonly").grid(row=row, column=2, sticky="we", padx=(8, 0), pady=1)
             if note:  # e.g. no TPU preset, so PLA was used
                 row += 1
                 ttk.Label(self.heads_frame, text=f"⚠ {note}", foreground=WARN_COLOUR).grid(

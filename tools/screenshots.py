@@ -33,7 +33,7 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     work = Path(tempfile.mkdtemp())
-    src = write_project(work / "bambu x1c project.3mf", e2e.bambu_project(args.profiles),
+    src = write_project(work / "Colour cubes.3mf", e2e.bambu_project(args.profiles),
                         [[(60 + 40 * i, 128) for i in range(4)]], size=20,
                         paint={i: paint.encode(i) for i in range(1, 5)})
     settings = work / "settings.json"
