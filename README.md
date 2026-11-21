@@ -122,6 +122,16 @@ changes the colour the slicer shows, not what gets printed. Projects with more c
 printer has toolheads start with the closest colours already merged. Several files
 at once are matched automatically.
 
+**Print profile** is Automatic by default: the slicer's own print preset with the
+closest layer height, with the designer's choices put over it. Or pick one of your
+own print profiles from Flash Studio, OrcaSlicer or Creality Print (marked *yours*) or
+any of the slicer's. Then your profile wins: walls, infill, supports and so on come
+from it, and only which filament prints what follows the project. Tick **Keep the
+designer's layer height, walls, infill, supports…** to put the designer's choices over
+your profile instead. A model can rely on the designer's settings (supports for
+overhangs, or Classic walls for very thin parts), so if a test slice fails with your
+profile, try ticking that box. The choice is remembered per printer.
+
 **Test slice** runs Flash Studio for the Flashforge printers and OrcaSlicer for the
 Creality ones (or OrcaSlicer wherever Flash Studio isn't installed) in the background
 after converting, and adds the print time and filament weight to the report, or the
@@ -142,6 +152,9 @@ python -m plateshift convert "Model.3mf" -c 3=#2E7D32         # show toolhead 3 
 python -m plateshift convert "Model.3mf" -f 1="FilX SBS @FF C5P" --test-slice
 python -m plateshift convert *.3mf --printer k1max -o converted\
 python -m plateshift filaments --printer c5p                  # preset names, yours marked
+python -m plateshift processes --printer c5p                  # print profiles, yours first
+python -m plateshift convert "Model.3mf" --process "0.20mm Standard @FF C5P"   # your profile wins
+python -m plateshift convert "Model.3mf" --process "0.20mm Standard @FF C5P" --keep-design
 python -m plateshift printers
 ```
 
@@ -153,7 +166,7 @@ converted settings behind.
 | Part of the project | What happens |
 |---|---|
 | Printer settings | Replaced by the target's system printer preset, start/end G-code included |
-| Print settings | Taken from the target process preset with the closest layer height. Then the project's design choices (layer height, walls, infill, supports, raft, brim, ironing, seam, fuzzy skin, which filament prints what, and line widths when the nozzle size matches) are carried over. Everything else comes from the target preset or the slicer's defaults. |
+| Print settings | Taken from the print profile you pick, or by default the target process preset with the closest layer height. Then, unless your own pick wins, the project's design choices (layer height, walls, infill, supports, raft, brim, ironing, seam, fuzzy skin, which filament prints what, and line widths when the nozzle size matches) are carried over. Everything else comes from the target preset or the slicer's defaults. |
 | Filaments | Each toolhead gets the closest target preset of the same material, matched on type and name (Basic, Silk, Matte, CF…), or the one you pick, and keeps the project's colour |
 | Painted colours | Rewritten triangle by triangle when colours are merged or moved to another toolhead, along with each object's filament, layer colour changes and support filament |
 | Models, per-object settings, plates | Copied unchanged |
@@ -167,7 +180,11 @@ The original file is never modified.
 ## Limits
 
 - Your own printer presets are never used. They hold things like the printer's IP
-  address and access key, which shouldn't end up in a project file.
+  address and access key, which shouldn't end up in a project file. Your own print
+  and filament profiles are fine to use.
+- Your own Creality Print profiles are only offered when PlateShift is using Creality
+  Print's printer profiles, which it does when OrcaSlicer isn't installed. They're built
+  on Creality Print's preset names, which OrcaSlicer's profiles don't have.
 - Creality projects use OrcaSlicer's profiles when OrcaSlicer is installed, otherwise
   Creality Print's. The two name the printer differently, so a project opened in the
   other slicer shows up as a project printer.

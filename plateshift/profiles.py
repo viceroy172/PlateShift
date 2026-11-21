@@ -77,14 +77,21 @@ def default_profile_roots() -> list[Path]:
     return roots
 
 
+USER_KINDS = ("filament", "process")  # never machine: those hold the printer's address and keys
+
+
 def user_preset_dirs() -> list[tuple[str, Path]]:
     """(slicer name, user folder) for each slicer that keeps user presets as json"""
     found = []
     for base in _config_dirs():
-        for label, folder in (("Flash Studio", "Orca-Flashforge"), ("OrcaSlicer", "OrcaSlicer")):
-            users = base / folder / "user"
+        places = [("Flash Studio", base / "Orca-Flashforge" / "user"), ("OrcaSlicer", base / "OrcaSlicer" / "user")]
+        # creality print keeps a folder per version: newest first
+        places += [("Creality Print", d) for d in sorted((base / "Creality").glob("Creality*Print*/*/user"),
+                                                           reverse=True)]
+        for label, users in places:
             if users.is_dir():
-                found.extend((label, d) for d in sorted(users.iterdir()) if (d / "filament").is_dir())
+                found.extend((label, d) for d in sorted(users.iterdir())
+                             if any((d / kind).is_dir() for kind in USER_KINDS))
     return found
 
 
@@ -134,7 +141,8 @@ class ProfileLibrary:
         self.vendor = vendor
         self._files: dict[str, dict[str, list[Path]]] = {k: {} for k in KINDS}
         self._packed: dict[str, dict[str, dict]] = {k: {} for k in KINDS}
-        self._user: dict[str, tuple[str, Path]] = {}   # filament name -> (slicer, file)
+        # kind -> preset name -> (slicer, file), for the user's own filament and print presets
+        self._user: dict[str, dict[str, tuple[str, Path]]] = {k: {} for k in USER_KINDS}
         self._raw: dict[Path, dict] = {}
         self._resolved: dict[tuple[str, str], dict] = {}
         # presets from the printer brand's own folder (not the shared library); a
@@ -168,12 +176,13 @@ class ProfileLibrary:
                 for old in preset.get("renamed_from") or []:
                     self._renamed[kind].setdefault(old, name)
         for label, folder in user_dirs or []:
-            for path in sorted((folder / "filament").glob("*.json")):
-                try:
-                    name = self._load(path).get("name") or path.stem
-                except (OSError, ValueError):
-                    continue
-                self._user.setdefault(name, (label, path))
+            for kind in USER_KINDS:
+                for path in sorted((folder / kind).glob("*.json")):
+                    try:
+                        name = self._load(path).get("name") or path.stem
+                    except (OSError, ValueError):
+                        continue
+                    self._user[kind].setdefault(name, (label, path))
 
     def _load(self, path: Path) -> dict:
         data = self._raw.get(path)
@@ -191,8 +200,8 @@ class ProfileLibrary:
                 return data
         if name in self._packed[kind]:
             return self._packed[kind][name]
-        if kind == "filament" and name in self._user:
-            return self._load(self._user[name][1])
+        if name in self._user.get(kind, {}):
+            return self._load(self._user[kind][name][1])
         if name in self._renamed[kind]:
             return self._raw_profile(kind, self._renamed[kind][name])
         # file name doesn't match, scan everthing
@@ -233,7 +242,7 @@ class ProfileLibrary:
                 merged.update(self._own(kind, raw))
             merged["name"] = name
             # these don't inherit, except user presets take them from their parent
-            user = kind == "filament" and name in self._user and not self._system(kind, name)
+            user = name in self._user.get(kind, {}) and not self._system(kind, name)
             for meta in ("compatible_printers", "compatible_prints", "filament_id",
                          "compatible_printers_condition", "instantiation"):
                 source = next((r for r in chain if r.get(meta)), None) if user else chain[0]
@@ -242,7 +251,7 @@ class ProfileLibrary:
                 else:
                     merged.pop(meta, None)
             if user:
-                merged["_user"] = self._user[name][0]
+                merged["_user"] = self._user[kind][name][0]
                 merged["_parent"] = chain[1]["name"] if len(chain) > 1 else ""  # current name, after renames
                 merged["instantiation"] = "true"
             self._resolved[key] = merged
@@ -258,8 +267,8 @@ class ProfileLibrary:
         3. otherwise a filament from the printer's own brand suits all that brand's printers.
         Each result is a copy, so marks for this printer don't leak into the cache."""
         names = self.names(kind)
-        if include_user and kind == "filament":
-            names += [n for n in self._user if not self._system(kind, n)]
+        if include_user:
+            names += [n for n in self._user.get(kind, {}) if not self._system(kind, n)]
         machine_settings = None
         found = []
         for name in names:

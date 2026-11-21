@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from make_project import bambu_settings, write_project  # noqa: E402
 from plateshift import paint  # noqa: E402
 from plateshift.convert import (ConversionError, _clear_prime_towers, _depth_for_height,  # noqa: E402
-                                _drop_gcode_rels, _filament_lists, _overlaps, _plate_centre, _plate_columns, _tower_size, analyse,
+                                _drop_gcode_rels, _filament_lists, _overlaps, _plate_centre, _plate_columns,
+                                _tower_size, analyse, process_choices,
                                 convert, unique_output)
 from plateshift.printers import BY_KEY, Target  # noqa: E402
 from plateshift.profiles import ProfileLibrary, locate  # noqa: E402
@@ -227,6 +228,72 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(s["inherits_group"][2], "Generic PLA @T")
         # auto choice never picks user presets
         self.assertNotIn("My SBS", s["filament_settings_id"][0])
+
+    def test_user_folders_of_every_slicer_are_found(self):
+        from unittest import mock
+        from plateshift import profiles
+        base = self.tmp / "config"
+        for folder in ("Orca-Flashforge/user/default/filament", "OrcaSlicer/user/default/process",
+                       "Creality/Creality Print/7.0/user/123/process", "Creality/Creality Print/6.0/user/123/process",
+                       "Creality/Creality Print/7.0/user/Temp", "OrcaSlicer/user/default/machine"):
+            (base / folder).mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(profiles, "_config_dirs", lambda: [base]):
+            found = [(label, d.relative_to(base).as_posix()) for label, d in profiles.user_preset_dirs()]
+        self.assertEqual(found, [("Flash Studio", "Orca-Flashforge/user/default"),
+                                 ("OrcaSlicer", "OrcaSlicer/user/default"),
+                                 ("Creality Print", "Creality/Creality Print/7.0/user/123"),
+                                 ("Creality Print", "Creality/Creality Print/6.0/user/123")])
+
+    def test_your_printer_presets_are_never_read(self):
+        user = self.tmp / "user"
+        _write(user / "machine" / "My printer.json", {"name": "My printer", "inherits": MACHINE,
+                                                      "print_host": "192.168.1.9", "printhost_apikey": "secret"})
+        lib = ProfileLibrary(self.tmp / "profiles", "Testvendor", [("OrcaSlicer", user)])
+        with self.assertRaises(KeyError):
+            lib.resolve("machine", "My printer")
+
+    def my_process_library(self):
+        user = self.tmp / "user"
+        _write(user / "process" / "0.20mm Mine @T.json", {
+            "name": "0.20mm Mine @T", "inherits": "0.20mm Standard @T", "from": "User",
+            "wall_loops": "4", "sparse_infill_density": "40%"})
+        return ProfileLibrary(self.tmp / "profiles", "Testvendor", [("Flash Studio", user)])
+
+    def test_your_print_profile_wins_over_the_designer(self):
+        lib = self.my_process_library()
+        mine = [p for p in process_choices(lib, TARGET) if p.get("_user")]
+        self.assertEqual([(p["name"], p["_user"]) for p in mine], [("0.20mm Mine @T", "Flash Studio")])
+        self.assertEqual(process_choices(lib, TARGET)[0]["name"], "0.20mm Mine @T")  # yours first
+        src = write_project(self.tmp / "p.3mf", bambu_settings(wall_filament="2"), [[(128, 128)]])
+        report = convert(src, self.tmp / "p-out.3mf", TARGET, lib, process="0.20mm Mine @T")
+        s = json.loads(read(self.tmp / "p-out.3mf", "Metadata/project_settings.config"))
+        self.assertEqual(s["print_settings_id"], "0.20mm Mine @T")
+        # the project asked for 0.16 mm, 3 walls, 25%, supports; your profile says otherwise
+        self.assertEqual((s["layer_height"], s["wall_loops"], s["sparse_infill_density"], s["enable_support"]),
+                         ("0.20", "4", "40%", "0"))
+        # which filament prints what still follows the project's colours
+        self.assertEqual(s["wall_filament"], "2")
+        self.assertIn("yours, from Flash Studio", report.process)
+
+    def test_designer_settings_can_go_over_your_print_profile(self):
+        lib = self.my_process_library()
+        src = write_project(self.tmp / "p.3mf", bambu_settings(), [[(128, 128)]])
+        convert(src, self.tmp / "p-out.3mf", TARGET, lib, process="0.20mm Mine @T", keep_design=True)
+        s = json.loads(read(self.tmp / "p-out.3mf", "Metadata/project_settings.config"))
+        self.assertEqual(s["print_settings_id"], "0.20mm Mine @T")
+        self.assertEqual((s["layer_height"], s["wall_loops"], s["sparse_infill_density"]), ("0.16", "3", "25%"))
+
+    def test_automatic_print_profile_never_picks_yours(self):
+        lib = self.my_process_library()
+        src = write_project(self.tmp / "p.3mf", bambu_settings(layer_height="0.20"), [[(128, 128)]])
+        convert(src, self.tmp / "p-out.3mf", TARGET, lib)
+        s = json.loads(read(self.tmp / "p-out.3mf", "Metadata/project_settings.config"))
+        self.assertEqual(s["print_settings_id"], "0.20mm Standard @T")
+
+    def test_unknown_print_profile_is_a_plain_error(self):
+        src = write_project(self.tmp / "p.3mf", bambu_settings(), [[(128, 128)]])
+        with self.assertRaisesRegex(ConversionError, "print profile 'Nope'"):
+            convert(src, self.tmp / "p-out.3mf", TARGET, self.lib, process="Nope")
 
     def test_user_presets_follow_renamed_parents(self):
         # orca renamed "Creality Generic PLA" to "Generic PLA @Creality"; old user presets still work

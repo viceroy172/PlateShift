@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from . import REPO_URL, __version__
-from .convert import ConversionError, analyse, convert, default_output, unique_output
+from .convert import ConversionError, analyse, convert, default_output, process_choices, unique_output
 from .printers import BY_KEY, TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
 from .slicers import CAN_TEST, find_slicers, test_slicer
@@ -57,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
                       metavar="TOOLHEAD=#RRGGBB", help="show a toolhead in your spool's colour")
     conv.add_argument("-m", "--merge", type=_parse_merge, metavar="COLOUR=TOOLHEAD,...",
                       help="put project colours on toolheads yourself; the rest are matched automatically")
+    conv.add_argument("--process", metavar='"PROFILE"',
+                      help="print profile to use, yours or the slicer's (see the processes command); "
+                           "default: the closest to the project's layer height")
+    conv.add_argument("--keep-design", action="store_true",
+                      help="with --process: still apply the designer's layer height, walls, infill, "
+                           "supports and so on over your profile")
     conv.add_argument("-t", "--test-slice", action="store_true",
                       help="slice the result to check it works (Flash Studio, or OrcaSlicer without it)")
     conv.add_argument("--profiles", type=Path, help="folder holding <Vendor>/machine, process, filament")
@@ -70,6 +76,9 @@ def build_parser() -> argparse.ArgumentParser:
     fil = sub.add_parser("filaments", help="list filament presets for a printer")
     fil.add_argument("-p", "--printer", default="c5p", choices=sorted(BY_KEY))
     fil.add_argument("--profiles", type=Path)
+    pro = sub.add_parser("processes", help="list print profiles for a printer, yours included")
+    pro.add_argument("-p", "--printer", default="c5p", choices=sorted(BY_KEY))
+    pro.add_argument("--profiles", type=Path)
     return parser
 
 
@@ -93,6 +102,13 @@ def _filaments(target, lib) -> int:
     for p in lib.compatible("filament", target.machine, include_user=True):
         mine = f"  [yours, {p['_user']}]" if p.get("_user") else ""
         print(f"{p['name']}  ({p.get('filament_type', ['?'])[0]}){mine}")
+    return 0
+
+
+def _processes(target, lib) -> int:
+    for p in process_choices(lib, target):
+        mine = f"  [yours, {p['_user']}]" if p.get("_user") else ""
+        print(f"{p['name']}  ({p.get('layer_height', '?')} mm layers){mine}")
     return 0
 
 
@@ -134,6 +150,13 @@ def _convert(args, target, lib) -> int:
         _err(f"{needs} wasn't found, so --test-slice can't run." if needs else
              f"Only Creality Print has the {target.label}, and it can't test slice; leave out --test-slice.")
         return 2
+    if args.keep_design and not args.process:
+        _err("--keep-design only matters with --process.")
+        return 2
+    if args.process and args.process not in {p["name"] for p in process_choices(lib, target)}:
+        _err(f"No print profile {args.process!r} for the {target.label}. "
+             f"List them with: plateshift processes --printer {target.key}")
+        return 2
 
     failures = 0
     for source in args.files:
@@ -144,7 +167,8 @@ def _convert(args, target, lib) -> int:
             if args.merge:
                 merge = [args.merge.get(f.index, t) for f, t in zip(plan.filaments, plan.merge, strict=True)]
             report = convert(source, output, target, lib, dict(args.filament), merge=merge, plan=plan,
-                             colours=dict(args.colour))
+                             colours=dict(args.colour), process=args.process,
+                             keep_design=args.keep_design)
         except ConversionError as exc:
             failures += 1
             _err(f"{source.name}: {exc}")
@@ -173,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.command == "filaments":
         return _filaments(target, lib)
+    if args.command == "processes":
+        return _processes(target, lib)
     if args.command == "inspect":
         return _inspect(args.file, target, lib)
     return _convert(args, target, lib)

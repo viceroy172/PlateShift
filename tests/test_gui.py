@@ -40,7 +40,11 @@ class WindowTests(unittest.TestCase):
         import plateshift.gui as gui
         self.gui = gui
         self.tmp = Path(tempfile.mkdtemp())
-        lib = ProfileLibrary(make_profiles(self.tmp / "profiles"), "Testvendor")
+        user = self.tmp / "user" / "process"
+        user.mkdir(parents=True)
+        (user / "0.20mm Mine @T.json").write_text(
+            '{"name": "0.20mm Mine @T", "inherits": "0.20mm Standard @T", "wall_loops": "5"}', encoding="utf-8")
+        lib = ProfileLibrary(make_profiles(self.tmp / "profiles"), "Testvendor", [("OrcaSlicer", user.parent)])
         self.saved = (gui.TARGETS, gui._settings_file, gui.find_slicers)
         gui.TARGETS = [FOUR, ONE, CREALITY]
         gui._settings_file = lambda: self.tmp / "settings.json"
@@ -75,6 +79,36 @@ class WindowTests(unittest.TestCase):
 
     def panel_ready(self):
         return getattr(self.app, "plan", None) is not None and not self.app.busy
+
+    def test_your_print_profile_is_offered_remembered_and_used(self):
+        app = self.app
+        app.printer.set(FOUR.label)
+        mine = "0.20mm Mine @T  (yours, OrcaSlicer)"
+        self.wait(lambda: mine in app.process_picker.cget("values"))
+        values = list(app.process_picker.cget("values"))
+        self.assertEqual(values[:2], [self.gui.AUTO_PROCESS, mine])
+        self.assertEqual(str(app.keeper.cget("state")), "disabled")  # nothing to keep over automatic
+
+        app.process_choice.set(mine)
+        self.assertEqual(app.chosen_process(), "0.20mm Mine @T")
+        self.assertEqual(str(app.keeper.cget("state")), "normal")
+        saved = json.loads((self.tmp / "settings.json").read_text())
+        self.assertEqual(saved["process_by_printer"][FOUR.key], "0.20mm Mine @T")
+
+        # another printer starts on automatic; coming back restores the choice
+        app.printer.set(ONE.label)
+        self.wait(lambda: mine in app.process_picker.cget("values"))
+        self.assertEqual(app.process_choice.get(), self.gui.AUTO_PROCESS)
+        app.printer.set(FOUR.label)
+        self.wait(lambda: app.process_choice.get() == mine)
+
+        app.handle_files([self.six_colours()])
+        self.wait(self.panel_ready)
+        app.convert_plan()
+        self.wait(lambda: not app.busy and app.last_output is not None)
+        with zipfile.ZipFile(app.last_output) as z:
+            s = json.loads(z.read("Metadata/project_settings.config"))
+        self.assertEqual((s["print_settings_id"], s["wall_loops"]), ("0.20mm Mine @T", "5"))
 
     def test_about_shows_the_version_and_github_link(self):
         from plateshift import CONTACT, REPO_URL, __version__

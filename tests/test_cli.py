@@ -40,7 +40,11 @@ class ConvertCommandTests(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        lib = ProfileLibrary(make_profiles(self.tmp / "profiles"), "Testvendor")
+        user = self.tmp / "user"
+        (user / "process").mkdir(parents=True)
+        (user / "process" / "0.20mm Mine @T.json").write_text(
+            '{"name": "0.20mm Mine @T", "inherits": "0.20mm Standard @T", "wall_loops": "4"}', encoding="utf-8")
+        lib = ProfileLibrary(make_profiles(self.tmp / "profiles"), "Testvendor", [("OrcaSlicer", user)])
         self.saved = cli._library
         cli._library = lambda target, profiles: (TARGET, lib)
         self.addCleanup(setattr, cli, "_library", self.saved)
@@ -50,6 +54,28 @@ class ConvertCommandTests(unittest.TestCase):
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = cli.main(list(args))
         return code, out.getvalue(), err.getvalue()
+
+    def test_processes_lists_yours_first(self):
+        code, out, _ = self.run_cli("processes")
+        self.assertEqual(code, 0)
+        lines = out.splitlines()
+        self.assertEqual(lines[0], "0.20mm Mine @T  (0.20 mm layers)  [yours, OrcaSlicer]")
+        self.assertIn("0.12mm Standard @T  (0.12 mm layers)", lines)
+
+    def test_convert_with_your_print_profile(self):
+        src = write_project(self.tmp / "in.3mf", bambu_settings(), [[(128, 128)]])
+        code, out, err = self.run_cli("convert", str(src), "--process", "0.20mm Mine @T")
+        self.assertEqual(code, 0, err)
+        self.assertIn("Process: 0.20mm Mine @T (yours, from OrcaSlicer)", out)
+
+    def test_print_profile_mistakes_are_explained(self):
+        src = write_project(self.tmp / "in.3mf", bambu_settings(), [[(128, 128)]])
+        code, _, err = self.run_cli("convert", str(src), "--process", "Nope")
+        self.assertEqual(code, 2)
+        self.assertIn("plateshift processes --printer", err)
+        code, _, err = self.run_cli("convert", str(src), "--keep-design")
+        self.assertEqual(code, 2)
+        self.assertIn("only matters with --process", err)
 
     def test_one_bad_file_doesnt_stop_a_batch(self):
         bad = self.tmp / "bad.3mf"

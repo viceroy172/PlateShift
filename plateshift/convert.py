@@ -306,6 +306,12 @@ def unique_output(path: Path) -> Path:
 
 # --- choosing presets ------------------------------------------------------
 
+def process_choices(lib: ProfileLibrary, target: Target) -> list[dict]:
+    """print profiles for the printer: the user's own first, then the system ones, by name"""
+    found = lib.compatible("process", target.machine, include_user=True)
+    return sorted(found, key=lambda p: (not p.get("_user"), p["name"].lower()))
+
+
 def choose_process(lib: ProfileLibrary, target: Target, layer_height: float) -> dict:
     candidates = lib.compatible("process", target.machine)
     if not candidates:
@@ -691,13 +697,22 @@ def _bed_type(default: str, current: str, filaments: list[dict]) -> str:
 
 
 def _rewrite_settings(src: dict, lib: ProfileLibrary, target: Target, overrides: dict[int, str],
-                      plan: Plan, report: Report, colours: dict[int, str] | None = None) -> dict:
+                      plan: Plan, report: Report, colours: dict[int, str] | None = None,
+                      process_name: str | None = None, keep_design: bool = False) -> dict:
     if max(plan.merge) > target.toolheads or min(plan.merge) < 1:
         raise ConversionError(f"Toolheads must be between 1 and {target.toolheads}.")
     machine = lib.resolve("machine", target.machine)
     layer_height = _as_float(src.get("layer_height"), 0.2)
-    process = choose_process(lib, target, layer_height)
+    if process_name:
+        try:
+            process = lib.resolve("process", process_name)
+        except (KeyError, ValueError, OSError) as exc:
+            raise ConversionError(f"Can't use the print profile {process_name!r}: {exc}") from None
+    else:
+        process = choose_process(lib, target, layer_height)
     report.printer, report.process = machine["name"], process["name"]
+    if process.get("_user"):
+        report.process += f" (yours, from {process['_user']})"
     report.slot_word = target.slot_word
 
     chosen, reps = _slots(plan, target, lib, overrides, colours or {}, report)
@@ -710,7 +725,11 @@ def _rewrite_settings(src: dict, lib: ProfileLibrary, target: Target, overrides:
     src_nozzle = _as_float(src.get("nozzle_diameter"), 0.4)
     dst_nozzle = _as_float(machine.get("nozzle_diameter"), 0.4)
     same_nozzle = abs(src_nozzle - dst_nozzle) < 1e-6
-    keep = list(KEEP_PROCESS) + (list(KEEP_IF_SAME_NOZZLE) if same_nozzle else [])
+    if process_name and not keep_design:
+        # the chosen profile wins; only which filament prints what follows the project
+        keep = list(FILAMENT_INDEX_KEYS)
+    else:
+        keep = list(KEEP_PROCESS) + (list(KEEP_IF_SAME_NOZZLE) if same_nozzle else [])
     report.kept = changed = _carry_over(src, out, process_settings, keep, plan.merge)
 
     filament_settings = _filament_lists(out, src, chosen, reps)
@@ -1143,10 +1162,14 @@ def _check_colours(colours: dict[int, str] | None) -> dict[int, str]:
 
 def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
             overrides: dict[int, str] | None = None, merge: list[int] | None = None,
-            plan: Plan | None = None, colours: dict[int, str] | None = None) -> Report:
+            plan: Plan | None = None, colours: dict[int, str] | None = None,
+            process: str | None = None, keep_design: bool = False) -> Report:
     """write `output`, the project in `source` set up for `target`.
     merge: toolhead per source colour (default: the plan's). overrides: toolhead
     -> preset name. colours: toolhead -> #RRGGBB to show instead of the designer's.
+    process: a print profile to use instead of the closest system one; then
+    keep_design says whether the designer's layer height, walls, infill, supports
+    and so on still go over it.
     Every problem with the file comes back as a ConversionError."""
     source, output = Path(source), Path(output)
     if source.resolve() == output.resolve():
@@ -1165,7 +1188,8 @@ def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
                 f"{target.toolheads}. Choose which toolhead each colour goes to.")
 
         job = _Conversion(zin, source, output, target, lib)
-        settings = _rewrite_settings(src, lib, target, overrides or {}, plan, job.report, colours)
+        settings = _rewrite_settings(src, lib, target, overrides or {}, plan, job.report, colours,
+                                     process, keep_design)
         if target.toolheads == 1 and len(plan.filaments) > 1:
             job.report.warnings.append("all colours print in one filament on this printer")
         job.recolour(plan)

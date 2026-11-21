@@ -13,8 +13,8 @@ from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from . import CONTACT, REPO_URL, __version__, dnd
-from .convert import (ConversionError, analyse, convert, default_output, lead_colour, suggest,
-                      unique_output)
+from .convert import (ConversionError, analyse, convert, default_output, lead_colour, process_choices,
+                      suggest, unique_output)
 from .printers import TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
 from .slicers import CAN_TEST, Slicer, find_slicers, open_in, test_slicer
@@ -74,6 +74,9 @@ def _explain(exc: Exception) -> str:
     return f"unexpected problem ({type(exc).__name__}: {exc}). Please report this with the file."
 
 
+AUTO_PROCESS = "Automatic (closest to the project's layer height)"
+
+
 def _display(profile: dict) -> str:
     return f"{profile['name']}  (yours, {profile['_user']})" if profile.get("_user") else profile["name"]
 
@@ -126,15 +129,30 @@ class App:
         self._quiet = False
         self.printer.trace_add("write", lambda *_: self.printer_changed())
 
+        # print profile: automatic, or one of the slicer's or the user's own
+        ttk.Label(top, text="Print profile").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        self.process_choice = tk.StringVar(value=AUTO_PROCESS)
+        self.process_names: dict[str, str] = {}   # shown text -> preset name
+        self.process_picker = ttk.Combobox(top, textvariable=self.process_choice, state="readonly",
+                                           width=48, values=[AUTO_PROCESS])
+        self.process_picker.grid(row=2, column=1, sticky="w", padx=8, pady=(8, 0))
+        self.keep_design = tk.BooleanVar(value=bool(self.settings.get("keep_design", False)))
+        self.keeper = ttk.Checkbutton(top, variable=self.keep_design,
+                                      text="Keep the designer's layer height, walls, infill, supports…")
+        self.keeper.grid(row=3, column=1, sticky="w", padx=8, pady=(4, 0))
+
         self.check = tk.BooleanVar(value=bool(self.settings.get("test_slice", True)))
         self.checker = ttk.Checkbutton(top, variable=self.check)
-        self.checker.grid(row=2, column=1, sticky="w", padx=8, pady=(6, 0))
+        self.checker.grid(row=4, column=1, sticky="w", padx=8, pady=(4, 0))
         self.update_tester()
+        self.update_processes()
         ttk.Button(top, text="About", command=self.about).grid(row=1, column=2, sticky="e", pady=(8, 0))
         if sys.platform == "darwin":
             root.createcommand("tkAboutDialog", self.about)  # the app menu's "About PlateShift"
 
         self.open_choice.trace_add("write", lambda *_: self.remember(slicer=True))
+        self.process_choice.trace_add("write", lambda *_: self.remember(process=True))
+        self.keep_design.trace_add("write", lambda *_: self.remember())
         for var in (self.printer, self.check):
             var.trace_add("write", lambda *_: self.remember())
 
@@ -212,13 +230,18 @@ class App:
         self._quiet = quiet
         self.update_open_button()
 
-    def remember(self, slicer: bool = False):
+    def remember(self, slicer: bool = False, process: bool = False):
+        self.update_keeper()
         if self._quiet:
             return
         if slicer:
             by_printer = self.settings.setdefault("open_in_by_printer", {})
             by_printer[self.target().key] = self.open_choice.get()
-        self.settings.update(printer=self.printer.get(), test_slice=self.check.get())
+        if process:
+            by_printer = self.settings.setdefault("process_by_printer", {})
+            by_printer[self.target().key] = self.chosen_process() or ""
+        self.settings.update(printer=self.printer.get(), test_slice=self.check.get(),
+                             keep_design=self.keep_design.get())
         save_settings(self.settings)
         self.update_open_button()
 
@@ -268,6 +291,8 @@ class App:
         self.button.configure(state=state)
         self.picker.configure(state="disabled" if busy else "readonly")
         self.opener.configure(state="disabled" if busy else "readonly")
+        self.process_picker.configure(state="disabled" if busy else "readonly")
+        self.update_keeper()
         if self.tester:
             self.checker.configure(state=state)
         self.root.configure(cursor="watch" if busy else "")
@@ -504,9 +529,50 @@ class App:
             self.checker.configure(text=f"Test slice (needs {needs})" if needs
                                    else "Test slice (not possible with Creality Print)", state="disabled")
 
+    def chosen_process(self) -> str | None:
+        """the print profile picked for this printer; None for automatic"""
+        return self.process_names.get(self.process_choice.get())
+
+    def update_keeper(self):
+        if hasattr(self, "keeper"):
+            # the designer's settings always go over an automatic choice
+            self.keeper.configure(state="normal" if self.chosen_process() and not self.busy else "disabled")
+
+    def update_processes(self):
+        """fill the print profile list for the printer, loading its profiles in the background"""
+        target = self.target()
+        quiet, self._quiet = self._quiet, True
+        self.process_names = {}
+        self.process_picker.configure(values=[AUTO_PROCESS])
+        self.process_choice.set(AUTO_PROCESS)
+        self._quiet = quiet
+        self.update_keeper()
+
+        def load():
+            try:
+                located, lib = self.library(target)
+                choices = process_choices(lib, located)
+            except Exception:  # no profiles: automatic is all there is, and converting says why
+                return
+            self.later(lambda: self.show_processes(target, choices))
+        threading.Thread(target=load, daemon=True).start()
+
+    def show_processes(self, target, choices: list[dict]):
+        if target.key != self.target().key:
+            return  # the printer changed while loading
+        self.process_names = {_display(p): p["name"] for p in choices}
+        self.process_picker.configure(values=[AUTO_PROCESS, *self.process_names])
+        saved = self.settings.get("process_by_printer", {}).get(target.key)
+        shown = next((text for text, name in self.process_names.items() if name == saved), AUTO_PROCESS)
+        quiet, self._quiet = self._quiet, True
+        self.process_choice.set(shown)
+        self._quiet = quiet
+        self.update_keeper()
+
     def printer_changed(self):
         self.update_slicer_choices()
         self.update_tester()
+        self.update_processes()
         # a panel built for the old printer has the wrong toolheads and presets
         if getattr(self, "plan", None) is not None and not self.busy:
             source = self.plan_source
@@ -558,6 +624,8 @@ class App:
         # a plan is only valid for the printer it was made for
         target = target or self.target()
         testing = self.check.get() and self.tester is not None
+        process = self.chosen_process() if target.key == self.target().key else None
+        keep_design = self.keep_design.get()
         self.set_busy(True)
         self.show.pack_forget()
         self.open_button.pack_forget()
@@ -577,7 +645,7 @@ class App:
                     try:
                         report = convert(source, output, target, lib, overrides or {},
                                          merge=merge, plan=plan if len(files) == 1 else None,
-                                         colours=colours)
+                                         colours=colours, process=process, keep_design=keep_design)
                     except Exception as exc:  # one bad file mustn't stop the rest
                         failed.append(source)
                         self.write(f"✗ {source.name}: not converted", "fail")
