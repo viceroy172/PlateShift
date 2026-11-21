@@ -1,5 +1,5 @@
 @echo off
 rem builds dist\PlateShift.exe (needs: py -m venv .venv && .venv\Scripts\pip install pyinstaller)
 cd /d "%~dp0"
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name PlateShift ^
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name PlateShift --icon "%~dp0packaging\icon.ico" ^
   --paths . --workpath build --distpath dist --specpath build packaging\plateshift_app.py

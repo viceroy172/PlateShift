@@ -12,7 +12,8 @@ import webbrowser
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from . import CONTACT, REPO_URL, __version__, dnd
+from . import REPO_URL, __version__, dnd
+from .icon_data import ICONS
 from .convert import (ConversionError, analyse, convert, default_output, lead_colour, process_choices,
                       suggest, unique_output)
 from .printers import TARGETS
@@ -25,6 +26,11 @@ OK_COLOUR = "#1a7f37"
 FAIL_COLOUR = "#b42318"
 WARN_COLOUR = "#9a6700"
 MUTED = "#555555"
+# the website's colours, used sparingly
+BRAND_BLUE = "#2f81f7"
+BRAND_DARK = "#0d1118"
+BRAND_TEXT = "#e8edf5"
+BRAND_MUTED = "#93a0b4"
 DONT_OPEN = "Don't open"
 
 # each system's own fonts; mac tk draws the same point size noticeably smaller
@@ -81,6 +87,22 @@ def _display(profile: dict) -> str:
     return f"{profile['name']}  (yours, {profile['_user']})" if profile.get("_user") else profile["name"]
 
 
+def _blue_progress(style: ttk.Style) -> str:
+    """a progress bar style in the website's blue. native windows and mac bars
+    ignore colours, so borrow clam's bar element, which takes them"""
+    name = "Blue.Horizontal.TProgressbar"
+    try:
+        if "blue.pbar" not in style.element_names():
+            style.element_create("blue.pbar", "from", "clam")
+        style.layout(name, [("Horizontal.Progressbar.trough", {"sticky": "nswe", "children": [
+            ("blue.pbar", {"side": "left", "sticky": "ns"})]})])
+        style.configure(name, background=BRAND_BLUE, troughcolor="#e6e9ee", bordercolor="#c9ced6",
+                        lightcolor=BRAND_BLUE, darkcolor=BRAND_BLUE)
+        return name
+    except tk.TclError:
+        return "Horizontal.TProgressbar"
+
+
 class App:
     def __init__(self, root: tk.Tk, initial_files: list[Path]):
         self.root = root
@@ -95,6 +117,12 @@ class App:
         self.tester: Slicer | None = None
         root.title("PlateShift")
         root.minsize(680, 460)
+        # tk drops images nobody holds, so keep them
+        self.icons = {size: tk.PhotoImage(data=data) for size, data in ICONS.items()}
+        try:
+            root.iconphoto(True, *(self.icons[s] for s in sorted(self.icons, reverse=True)))
+        except tk.TclError:
+            pass
         # tk's stock linux look is dated; clam is built in and much cleaner.
         # windows and macos keep their native themes
         style = ttk.Style(root)
@@ -103,9 +131,8 @@ class App:
             style.theme_use("clam")
             self.bg = style.lookup("TFrame", "background")
             root.configure(bg=self.bg)
-            # clam's bar is near enough the background colour to look empty when full
-            style.configure("Horizontal.TProgressbar", background=OK_COLOUR, troughcolor="#f2f1ee",
-                            bordercolor="#9e9a91", lightcolor=OK_COLOUR, darkcolor=OK_COLOUR)
+        self.progress_style = _blue_progress(style)
+        self.header(root)
 
         top = ttk.Frame(root, padding=(12, 12, 12, 4))
         top.pack(fill="x")
@@ -165,7 +192,7 @@ class App:
 
         status = ttk.Frame(root, padding=(12, 4, 12, 12))
         status.pack(side="bottom", fill="x")
-        self.progress = ttk.Progressbar(status, mode="determinate", length=160)
+        self.progress = ttk.Progressbar(status, mode="determinate", length=160, style=self.progress_style)
         self.progress.pack(side="left")
         self.status = tk.Label(status, text="Ready. Choose files to convert.", anchor="w", fg=MUTED,
                                **({"bg": self.bg} if self.bg else {}))
@@ -489,6 +516,17 @@ class App:
             save_settings(self.settings)
         self.refresh_heads()
 
+    def header(self, root):
+        """a slim dark band with the logo, like the website's"""
+        band = tk.Frame(root, bg=BRAND_DARK, padx=12, pady=8)
+        band.pack(fill="x")
+        tk.Label(band, image=self.icons[32], bg=BRAND_DARK).pack(side="left")
+        tk.Label(band, text="PlateShift", font=ui_font(13, "bold"), fg=BRAND_TEXT, bg=BRAND_DARK).pack(
+            side="left", padx=(8, 0))
+        tk.Label(band, text="Bambu projects for your own printer · everything stays on this computer",
+                 fg=BRAND_MUTED, bg=BRAND_DARK, font=ui_font(9)).pack(side="left", padx=(12, 0))
+        tk.Frame(root, bg=BRAND_BLUE, height=2).pack(fill="x")  # a thin blue rule under it
+
     def about(self):
         if getattr(self, "about_window", None) is not None and self.about_window.winfo_exists():
             self.about_window.lift()
@@ -497,10 +535,15 @@ class App:
         win.title("About PlateShift")
         win.resizable(False, False)
         win.transient(self.root)
-        box = ttk.Frame(win, padding=(24, 18))
+        band = tk.Frame(win, bg=BRAND_DARK, padx=24, pady=16)
+        band.pack(fill="x")
+        tk.Label(band, image=self.icons[48], bg=BRAND_DARK).pack(side="left")
+        names = tk.Frame(band, bg=BRAND_DARK)
+        names.pack(side="left", padx=(12, 0))
+        tk.Label(names, text="PlateShift", font=ui_font(16, "bold"), fg=BRAND_TEXT, bg=BRAND_DARK).pack(anchor="w")
+        tk.Label(names, text=f"Version {__version__}", fg=BRAND_MUTED, bg=BRAND_DARK).pack(anchor="w")
+        box = ttk.Frame(win, padding=(24, 16))
         box.pack(fill="both", expand=True)
-        ttk.Label(box, text="PlateShift", font=ui_font(16, "bold")).pack(anchor="w")
-        ttk.Label(box, text=f"Version {__version__}", foreground=MUTED).pack(anchor="w", pady=(0, 10))
         ttk.Label(box, wraplength=380, justify="left",
                   text="Converts Bambu Studio and MakerWorld 3MF projects so they open ready to print on "
                        "another printer. Everything happens on this computer; nothing is sent anywhere.").pack(
@@ -513,7 +556,6 @@ class App:
                   text="Source code, help and new versions are on GitHub. Open source under the MIT licence. "
                        "Not affiliated with Bambu Lab, Flashforge, Creality or MakerWorld.").pack(
             anchor="w", pady=(10, 0))
-        ttk.Label(box, text=f"Contact: {CONTACT}", foreground=MUTED).pack(anchor="w", pady=(6, 0))
         ttk.Button(box, text="Close", command=win.destroy).pack(anchor="e", pady=(14, 0))
         win.bind("<Escape>", lambda e: win.destroy())
 

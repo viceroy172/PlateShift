@@ -111,7 +111,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual((s["print_settings_id"], s["wall_loops"]), ("0.20mm Mine @T", "5"))
 
     def test_about_shows_the_version_and_github_link(self):
-        from plateshift import CONTACT, REPO_URL, __version__
+        from plateshift import REPO_URL, __version__
         opened = []
         self.gui.webbrowser.open, saved = opened.append, self.gui.webbrowser.open
         self.addCleanup(setattr, self.gui.webbrowser, "open", saved)
@@ -128,7 +128,7 @@ class WindowTests(unittest.TestCase):
                 walk(c)
         walk(windows[0])
         self.assertIn(f"Version {__version__}", labels)
-        self.assertIn(f"Contact: {CONTACT}", labels)
+        self.assertFalse(any("@" in text for text in labels))  # no email address in the app
         self.root.update()  # tk only delivers clicks to widgets on screen
         labels[REPO_URL].event_generate("<Button-1>")
         self.assertEqual(opened, [REPO_URL])

@@ -74,7 +74,12 @@ jobs:
         run: |
           python -m pip install --quiet pyinstaller
           python -m PyInstaller --noconfirm --windowed --name PlateShift --paths . \
+            --icon packaging/icon.icns \
             --osx-bundle-identifier io.github.viceroy172.plateshift packaging/plateshift_app.py
+          # finder's Get Info shows this version
+          version=$(python -c "import plateshift; print(plateshift.__version__)")
+          plutil -replace CFBundleShortVersionString -string "$version" dist/PlateShift.app/Contents/Info.plist
+          plutil -replace CFBundleVersion -string "$version" dist/PlateShift.app/Contents/Info.plist
       - name: the app runs
         run: dist/PlateShift.app/Contents/MacOS/PlateShift printers
       - name: zip it
