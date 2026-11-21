@@ -84,8 +84,17 @@ on the window is Windows only; use **Choose 3MF files…** instead.
 
 Download `PlateShift-mac.zip` from the [latest release](https://github.com/viceroy172/PlateShift/releases/latest),
 unzip it and drag `PlateShift.app` to Applications. The app isn't signed by Apple,
-so the first time macOS will refuse to open it: right-click the app, choose **Open**,
-then **Open** again (or run `xattr -dr com.apple.quarantine /Applications/PlateShift.app`).
+so the first time macOS won't open it:
+
+1. Double-click PlateShift. macOS says it can't verify the app; click **Done**.
+2. Open **System Settings → Privacy & Security**, scroll down to the message about
+   PlateShift and click **Open Anyway**, then confirm.
+
+On macOS 14 (Sonoma) and earlier you can instead right-click the app, choose **Open**,
+then **Open** again. Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/PlateShift.app`.
+
+If macOS says PlateShift **is damaged**, you have a 0.4.3 or 0.4.4 download from before
+21 November 2026, whose signature was broken. Download it again.
 
 Or run it from source with Python 3.11+ from python.org (Homebrew's Python needs
 `brew install python-tk` as well):
