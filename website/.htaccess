@@ -1,6 +1,16 @@
 # PlateShift landing page. Ignored by hosts that don't run Apache.
 DirectoryIndex index.html
 
+# send plain http and www visitors to the secure address. only
+# https://cleland.co.za has a certificate, so https://www can't be redirected:
+# the browser warns before it ever reaches this file
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteCond %{HTTPS} off [OR]
+  RewriteCond %{HTTP_HOST} ^www\. [NC]
+  RewriteRule ^(.*)$ https://cleland.co.za/PlateShift/$1 [R=301,L]
+</IfModule>
+
 <IfModule mod_expires.c>
   ExpiresActive On
   ExpiresByType image/png "access plus 1 month"
