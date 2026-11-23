@@ -122,12 +122,15 @@ hasn't had much use on real Macs yet; reports are welcome.
 
 **Window:** run `PlateShift.exe` on Windows, `PlateShift.app` on macOS, or
 `./plateshift.sh` on Linux (`PlateShift.bat` on Windows when running from source).
-Pick the printer, then choose files or drop them on the window.
+Pick the printer's brand and model, then choose files or drop them on the window.
 
-For a single file you get a panel listing the project's colours and how much of
-the model each one paints. Put each colour on a toolhead (two colours on one
-toolhead merges them) and pick a filament preset per toolhead, including your
-own presets from Flash Studio and OrcaSlicer. Click a toolhead's colour to change it
+For a single file you get a panel with the project's own picture of its first plate
+(click it to see every plate full size, so you know it's the right file), the
+project's colours and how much of the model each one paints. Put each colour on a
+toolhead (two colours on one toolhead merges them) and pick a filament preset per
+toolhead, including your own presets from Flash Studio and OrcaSlicer. The filament
+you pick for a toolhead is remembered for that printer and offered first next time
+(marked *your usual*), as long as the project needs the same material there. Click a toolhead's colour to change it
 to your spool's colour (the last ten you used are kept for quick picking); this only
 changes the colour the slicer shows, not what gets printed. Projects with more colours than the
 printer has toolheads start with the closest colours already merged. Several files

@@ -1,3 +1,3 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-__version__ = "0.4.4"
+__version__ = "0.5.0"
 REPO_URL = "https://github.com/viceroy172/PlateShift"

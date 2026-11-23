@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import math
 import os
 import queue
 import sys
@@ -15,7 +17,8 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from . import REPO_URL, __version__, dnd
 from .icon_data import ICONS
-from .convert import (ConversionError, analyse, convert, default_output, lead_colour, process_choices,
+from .preview import plate_pictures
+from .convert import (ConversionError, _family, analyse, convert, default_output, lead_colour, process_choices,
                       suggest, unique_output)
 from .printers import TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
@@ -81,7 +84,24 @@ def _explain(exc: Exception) -> str:
     return f"unexpected problem ({type(exc).__name__}: {exc}). Please report this with the file."
 
 
+def _brands() -> list[str]:
+    return list(dict.fromkeys(t.vendor for t in TARGETS))
+
+
+def _model_name(target) -> str:
+    """the printer's name without its brand: Flashforge AD5X -> AD5X"""
+    prefix = target.vendor + " "
+    return target.label[len(prefix):] if target.label.startswith(prefix) else target.label
+
+
 AUTO_PROCESS = "Automatic (closest to the project's layer height)"
+
+
+def _material(profile: dict) -> str:
+    """the material family of a filament preset"""
+    kind = profile.get("filament_type")
+    kind = kind[0] if isinstance(kind, list) and kind else kind
+    return _family(str(kind or "").upper())  # silk pla counts as pla, as when converting
 
 
 def _display(profile: dict) -> str:
@@ -141,10 +161,20 @@ class App:
         ttk.Label(top, text="Target printer").grid(row=0, column=0, sticky="w")
         labels = [t.label for t in TARGETS]
         saved_printer = self.settings.get("printer")
+        # the chosen printer's full label; the brand and model boxes show it in two parts
         self.printer = tk.StringVar(value=saved_printer if saved_printer in labels else labels[0])
-        self.picker = ttk.Combobox(top, textvariable=self.printer, state="readonly", width=34,
-                                   values=labels)
-        self.picker.grid(row=0, column=1, sticky="w", padx=8)
+        pickers = ttk.Frame(top)
+        pickers.grid(row=0, column=1, sticky="w", padx=8)
+        self.brand = tk.StringVar()
+        self.brand_picker = ttk.Combobox(pickers, textvariable=self.brand, state="readonly", width=12)
+        self.brand_picker.pack(side="left")
+        self.model = tk.StringVar()
+        self.picker = ttk.Combobox(pickers, textvariable=self.model, state="readonly", width=30)
+        self.picker.pack(side="left", padx=(6, 0))
+        self._syncing = False
+        self.show_printer()
+        self.brand.trace_add("write", lambda *_: self.brand_changed())
+        self.model.trace_add("write", lambda *_: self.model_changed())
         self.button = ttk.Button(top, text="Choose 3MF files…", command=self.choose)
         self.button.grid(row=0, column=2, sticky="e")
 
@@ -270,6 +300,8 @@ class App:
         if process:
             by_printer = self.settings.setdefault("process_by_printer", {})
             by_printer[self.target().key] = self.chosen_process() or ""
+        target = self.target()
+        self.settings.setdefault("printer_by_brand", {})[target.vendor] = target.label
         self.settings.update(printer=self.printer.get(), test_slice=self.check.get(),
                              keep_design=self.keep_design.get())
         save_settings(self.settings)
@@ -320,6 +352,7 @@ class App:
         state = "disabled" if busy else "normal"
         self.button.configure(state=state)
         self.picker.configure(state="disabled" if busy else "readonly")
+        self.brand_picker.configure(state="disabled" if busy else "readonly")
         self.opener.configure(state="disabled" if busy else "readonly")
         self.process_picker.configure(state="disabled" if busy else "readonly")
         self.update_keeper()
@@ -359,10 +392,10 @@ class App:
         self.set_status(f"Reading {source.name}…")
 
         def work():
-            result = (None, None, None)
+            result = (None, None, None, [])
             try:
                 located, lib = self.library(target)
-                result = (source, located, analyse(source, located, lib))
+                result = (source, located, analyse(source, located, lib), plate_pictures(source))
             except Exception as exc:  # anything at all: the window must never stay busy
                 self.write(f"✗ {source.name}: not converted", "fail")
                 self.write(f"  {_explain(exc)}\n")
@@ -371,7 +404,7 @@ class App:
 
         threading.Thread(target=work, daemon=True).start()
 
-    def after_prepare(self, source, target, plan):
+    def after_prepare(self, source, target, plan, pictures=()):
         self.progress.stop()
         self.progress.configure(mode="determinate", value=0)
         self.set_busy(False)
@@ -379,9 +412,9 @@ class App:
             self.status.configure(text="✗ Nothing was converted (see below)", fg=FAIL_COLOUR,
                                   font=ui_font(10, "bold"))
             return
-        self.show_plan(source, target, plan)
+        self.show_plan(source, target, plan, pictures)
 
-    def show_plan(self, source: Path, target, plan):
+    def show_plan(self, source: Path, target, plan, pictures=()):
         self.plan = plan
         self.plan_source = source
         self.plan_target = target
@@ -393,6 +426,7 @@ class App:
         heads = [str(i) for i in range(1, target.toolheads + 1)]
         box = ttk.LabelFrame(self.plan_frame, text=f" {source.name} ", padding=10)
         box.pack(fill="x")
+        self.show_thumbnail(box, source, pictures)
 
         left = ttk.Frame(box)
         left.pack(side="left", fill="y", anchor="n")
@@ -427,6 +461,10 @@ class App:
         self.head_vars: dict[int, tk.StringVar] = {}
         self.head_user_set: set[int] = set()
         self.head_colours: dict[int, str] = {}
+        # filaments the user picked for each toolhead of this printer before
+        self.usual = dict(self.settings.get("filaments_by_printer", {}).get(target.key, {}))
+        self.head_usual: set[int] = set()
+        self.preset_types = {p["name"]: _material(p) for p in plan.candidates}
         self.refresh_heads()
 
         buttons = ttk.Frame(self.plan_frame, padding=(0, 6, 0, 0))
@@ -439,6 +477,54 @@ class App:
         check = (f"Check the {target.slot_word.lower()}s and their filaments, then Convert."
                  if target.toolheads > 1 else "Check the filament, then Convert.")
         self.status.configure(text=check, fg=MUTED, font=ui_font(9))
+
+    def show_thumbnail(self, box, source: Path, pictures):
+        """the plate picture the project carries, so you can see it's the right file"""
+        images = []
+        for data in pictures:
+            try:
+                images.append(tk.PhotoImage(data=base64.b64encode(data).decode("ascii")))
+            except tk.TclError:
+                continue
+        self.plate_images = images  # tk drops images nobody holds
+        if not images:
+            return
+        first = images[0]
+        small = first.subsample(max(1, math.ceil(max(first.width(), first.height()) / 110)))
+        self.plate_images = images + [small]
+        frame = ttk.Frame(box)
+        frame.pack(side="left", anchor="n", padx=(0, 12))
+        pic = tk.Label(frame, image=small, cursor="hand2", bd=1, relief="solid", bg="#ffffff")
+        pic.pack()
+        pic.bind("<Button-1>", lambda e: self.show_plates(source, images))
+        more = f"Plate 1 of {len(images)}\nclick to enlarge" if len(images) > 1 else "click to enlarge"
+        ttk.Label(frame, text=more, foreground=MUTED, font=ui_font(8), justify="center").pack(pady=(3, 0))
+
+    def show_plates(self, source: Path, images):
+        win = tk.Toplevel(self.root)
+        win.title(source.name)
+        win.transient(self.root)
+        shown = [0]
+        pic = tk.Label(win, image=images[0], bg="#ffffff")
+        pic.pack(padx=12, pady=(12, 6))
+        bar = ttk.Frame(win, padding=(12, 0, 12, 12))
+        bar.pack(fill="x")
+        caption = ttk.Label(bar, foreground=MUTED)
+
+        def go(step: int):
+            shown[0] = (shown[0] + step) % len(images)
+            pic.configure(image=images[shown[0]])
+            caption.configure(text=f"Plate {shown[0] + 1} of {len(images)}")
+        if len(images) > 1:
+            ttk.Button(bar, text="<", width=3, command=lambda: go(-1)).pack(side="left")
+            caption.pack(side="left", padx=10)
+            ttk.Button(bar, text=">", width=3, command=lambda: go(1)).pack(side="left")
+            go(0)
+            win.bind("<Left>", lambda e: go(-1))
+            win.bind("<Right>", lambda e: go(1))
+        ttk.Button(bar, text="Close", command=win.destroy).pack(side="right")
+        win.bind("<Escape>", lambda e: win.destroy())
+        self.plates_window = win
 
     def current_merge(self) -> list[int]:
         return [int(v.get()) for v in self.merge_vars]
@@ -469,11 +555,22 @@ class App:
             note = ""
             if t not in self.head_user_set:
                 name, note = suggest(plan, merge, t)
+                # the filament last picked for this toolhead, when it's the same material
+                usual = self.usual.get(str(t))
+                if (usual and usual != name and usual in by_name
+                        and self.preset_types.get(usual) == self.preset_types.get(name)):
+                    name, note = usual, ""
+                    self.head_usual.add(t)
+                else:
+                    self.head_usual.discard(t)
                 self._quiet = True
                 var.set(by_name.get(name, ""))
                 self._quiet = False
             ttk.Combobox(self.heads_frame, textvariable=var, values=list(self.preset_names),
                          width=30, state="readonly").grid(row=row, column=2, sticky="we", padx=(8, 0), pady=1)
+            if t in self.head_usual and t not in self.head_user_set:
+                ttk.Label(self.heads_frame, text="your usual", foreground=MUTED).grid(
+                    row=row, column=3, sticky="w", padx=(6, 0))
             if note:  # e.g. no TPU preset, so PLA was used
                 row += 1
                 ttk.Label(self.heads_frame, text=f"⚠ {note}", foreground=WARN_COLOUR).grid(
@@ -617,7 +714,40 @@ class App:
         self._quiet = quiet
         self.update_keeper()
 
+    def show_printer(self):
+        """set the brand and model boxes to the chosen printer"""
+        target = self.target()
+        self._syncing = True
+        try:
+            self.brand_picker.configure(values=_brands())
+            self.brand.set(target.vendor)
+            self.picker.configure(values=[_model_name(t) for t in TARGETS if t.vendor == target.vendor])
+            self.model.set(_model_name(target))
+        finally:
+            self._syncing = False
+
+    def brand_changed(self):
+        if self._syncing:
+            return
+        models = [t for t in TARGETS if t.vendor == self.brand.get()]
+        if not models:
+            return
+        leaving = self.target()  # so coming back to its brand returns to it
+        self.settings.setdefault("printer_by_brand", {})[leaving.vendor] = leaving.label
+        # the model last used for this brand, else its first
+        last = self.settings.get("printer_by_brand", {}).get(self.brand.get()) or self.settings.get("printer")
+        self.printer.set(next((t.label for t in models if t.label == last), models[0].label))
+
+    def model_changed(self):
+        if self._syncing:
+            return
+        target = next((t for t in TARGETS if t.vendor == self.brand.get() and _model_name(t) == self.model.get()),
+                      None)
+        if target and target.label != self.printer.get():
+            self.printer.set(target.label)
+
     def printer_changed(self):
+        self.show_printer()
         self.update_slicer_choices()
         self.update_tester()
         self.update_processes()
@@ -639,12 +769,16 @@ class App:
         # only presets the user picked are passed; the rest are chosen for the
         # final layout by convert, the same way the panel suggested them
         overrides = {}
+        target = self.plan_target
+        usual = self.settings.setdefault("filaments_by_printer", {}).setdefault(target.key, {})
         for t in sorted(set(merge)):
             chosen = self.preset_names.get(self.head_vars[t].get())
-            if chosen and t in self.head_user_set:
+            if chosen and (t in self.head_user_set or t in self.head_usual):
                 overrides[t] = chosen
+            if chosen and t in self.head_user_set:
+                usual[str(t)] = chosen  # offered first next time
+        save_settings(self.settings)
         colours = {t: c for t, c in self.head_colours.items() if t in set(merge)}
-        target = self.plan_target
         output = self.choose_output(default_output(source, target))
         if output is None:
             return  # cancelled; the panel stays open

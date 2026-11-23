@@ -133,6 +133,56 @@ class WindowTests(unittest.TestCase):
         labels[REPO_URL].event_generate("<Button-1>")
         self.assertEqual(opened, [REPO_URL])
 
+    def test_brand_then_model(self):
+        gui = self.gui
+        other = Target("other", "Otherbrand Speedy", "Otherbrand", MACHINE, "0.20mm Standard @T", 1, "Speedy")
+        gui.TARGETS = [FOUR, ONE, other]
+        app = self.app
+        app.show_printer()
+        self.assertEqual(list(app.brand_picker.cget("values")), ["Testvendor", "Otherbrand"])
+        app.brand.set("Otherbrand")
+        self.assertEqual(app.printer.get(), "Otherbrand Speedy")
+        self.assertEqual(app.model.get(), "Speedy")  # the brand isn't repeated
+        self.assertEqual(list(app.picker.cget("values")), ["Speedy"])
+        app.brand.set("Testvendor")
+        self.assertEqual(app.printer.get(), ONE.label)  # the model last used for that brand
+        app.model.set(FOUR.label)
+        self.assertEqual(app.printer.get(), FOUR.label)
+        app.brand.set("Otherbrand")
+        app.brand.set("Testvendor")
+        self.assertEqual(app.printer.get(), FOUR.label)
+
+    def test_plate_picture_shows_and_enlarges(self):
+        from test_preview import PNG
+        src = self.six_colours()
+        with zipfile.ZipFile(src, "a") as z:
+            z.writestr("Metadata/plate_1.png", PNG)
+            z.writestr("Metadata/plate_2.png", PNG)
+        self.app.handle_files([src])
+        self.wait(self.panel_ready)
+        self.assertEqual(len(self.app.plate_images), 3)  # two plates and the small copy
+        self.app.show_plates(src, self.app.plate_images[:2])
+        self.assertTrue(self.app.plates_window.winfo_exists())
+
+    def test_filaments_are_remembered_per_toolhead(self):
+        app = self.app
+        app.printer.set(FOUR.label)
+        app.handle_files([self.six_colours()])
+        self.wait(lambda: self.panel_ready() and app.plan_target.toolheads == 4)
+        silk = next(text for text, name in app.preset_names.items() if name == "Generic PLA Silk @T")
+        app.head_vars[2].set(silk)  # the user picks silk for toolhead 2
+        app.convert_plan()
+        self.wait(lambda: not app.busy and app.last_output is not None)
+        saved = json.loads((self.tmp / "settings.json").read_text())
+        self.assertEqual(saved["filaments_by_printer"][FOUR.key], {"2": "Generic PLA Silk @T"})
+
+        # next time toolhead 2 starts on silk, marked as the usual one
+        app.handle_files([self.six_colours()])
+        self.wait(self.panel_ready)
+        self.assertEqual(app.preset_names[app.head_vars[2].get()], "Generic PLA Silk @T")
+        self.assertIn(2, app.head_usual)
+        self.assertNotIn(1, app.head_usual)
+
     def test_test_slicer_follows_the_printer(self):
         app = self.app
         self.assertEqual(str(app.checker.cget("state")), "disabled")  # no slicers found
