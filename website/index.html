@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PlateShift: print any Bambu project on your own printer</title>
-<meta name="description" content="PlateShift converts Bambu Studio and MakerWorld 3MF projects for Flashforge and Creality printers. Free, open source, and 100% on your own computer: nothing ever leaves it.">
+<title>PlateShift: free MakerWorld &amp; Bambu 3MF converter for Flashforge and Creality</title>
+<meta name="description" content="Print MakerWorld and Bambu Studio 3MF projects on Flashforge (Creator 5, AD5X, Adventurer 5M) and Creality (K1, K2, SparkX) printers, colours included. Free, open source, Windows, Mac and Linux, and 100% on your own computer.">
 <meta name="theme-color" content="#07090d">
 <link rel="canonical" href="https://cleland.co.za/PlateShift/">
 <meta property="og:type" content="website">
-<meta property="og:title" content="PlateShift: print any Bambu project on your own printer">
+<meta property="og:title" content="PlateShift: free MakerWorld &amp; Bambu 3MF converter for Flashforge and Creality">
 <meta property="og:description" content="Convert Bambu Studio and MakerWorld 3MF projects for Flashforge and Creality printers. Free, open source, and nothing ever leaves your computer.">
 <meta property="og:url" content="https://cleland.co.za/PlateShift/">
 <meta property="og:image" content="https://cleland.co.za/PlateShift/images/done_results.png">
@@ -144,7 +144,49 @@
     html { scroll-behavior: auto; }
     .btn, .card { transition: none; }
   }
+  /* faq */
+  .faq { display: grid; gap: 12px; max-width: 860px; }
+  .faq details { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 0 20px; }
+  .faq details[open] { border-color: rgba(88,166,255,.45); }
+  .faq summary { cursor: pointer; padding: 16px 0; font-weight: 600; list-style: none; display: flex; justify-content: space-between; gap: 16px; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: "+"; color: var(--blue-2); font-size: 20px; line-height: 1; }
+  .faq details[open] summary::after { content: "\2212"; }
+  .faq details p { margin: 0 0 18px; color: var(--muted); }
 </style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "PlateShift",
+      "description": "Print MakerWorld and Bambu Studio 3MF projects on Flashforge (Creator 5, AD5X, Adventurer 5M) and Creality (K1, K2, SparkX) printers, colours included. Free, open source, Windows, Mac and Linux, and 100% on your own computer.",
+      "url": "https://cleland.co.za/PlateShift/",
+      "applicationCategory": "UtilitiesApplication",
+      "operatingSystem": "Windows, macOS, Linux",
+      "downloadUrl": "https://github.com/viceroy172/PlateShift/releases/latest",
+      "softwareHelp": "https://github.com/viceroy172/PlateShift#readme",
+      "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+      "isAccessibleForFree": true,
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+      "screenshot": "https://cleland.co.za/PlateShift/images/done_results.png",
+      "codeRepository": "https://github.com/viceroy172/PlateShift"
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {"@type": "Question", "name": "Can I print MakerWorld models on a Flashforge or Creality printer?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Download the 3MF project from MakerWorld, drop it on PlateShift, pick your printer and convert. The copy opens in Flash Studio, OrcaSlicer or Creality Print set up for your printer, with its plates, objects and painted colours."}},
+        {"@type": "Question", "name": "Does it keep the colours of multicolour models?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Painted colours move to your printer's toolheads (Creator 5) or slots (AD5X, Creality CFS). If a project has more colours than your printer, similar ones are merged for you, and you can change any of it."}},
+        {"@type": "Question", "name": "Which printers does PlateShift support?", "acceptedAnswer": {"@type": "Answer", "text": "Flashforge Creator 5 Pro, Creator 5, AD5X, Adventurer 5M and 5M Pro, and the Creality K1, K1C, K1 SE, K1 Max (with or without the CFS), K2, K2 Plus, K2 Pro, K2 SE and SparkX i7 and i8."}},
+        {"@type": "Question", "name": "Do I need anything else installed?", "acceptedAnswer": {"@type": "Answer", "text": "A slicer that has your printer's profiles: Flash Studio or OrcaSlicer for Flashforge, OrcaSlicer or Creality Print for Creality. PlateShift reads the profiles your slicer already installed."}},
+        {"@type": "Question", "name": "Is it free? Does it upload my files?", "acceptedAnswer": {"@type": "Answer", "text": "It's free and open source (GNU AGPL). It never connects to the internet: everything happens on your own computer, and your original file is never changed."}},
+        {"@type": "Question", "name": "Does it work on Mac and Linux?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. There's a Windows program and a Mac app to download, and Linux runs it from source with Python."}}
+      ]
+    }
+  ]
+}
+</script>
 </head>
 <body>
 
@@ -177,6 +219,7 @@
       <a href="#private">Privacy</a>
       <a href="#printers">Printers</a>
       <a href="#how">How it works</a>
+      <a href="#faq">FAQ</a>
     </div>
     <a class="btn btn-primary btn-sm" href="#download">Download</a>
   </div>
@@ -292,6 +335,21 @@
       <b>More info → Run anyway</b>. On a Mac, open it once, then go to <b>System Settings → Privacy &amp; Security</b>
       and click <b>Open Anyway</b> (on macOS 14 and earlier, right-click PlateShift and choose <b>Open</b> instead).
       Release notes and checksums are on the <a href="https://github.com/viceroy172/PlateShift/releases/latest">GitHub release page</a>.</p>
+  </div>
+</section>
+<section id="faq" class="alt">
+  <div class="wrap">
+    <div class="eyebrow">Questions</div>
+    <h2>Frequently asked</h2>
+    <p class="sub">The short answers. The <a href="https://github.com/viceroy172/PlateShift#readme">README on GitHub</a> has the details.</p>
+    <div class="faq">
+      <details><summary>Can I print MakerWorld models on a Flashforge or Creality printer?</summary><p>Yes. Download the 3MF project from MakerWorld, drop it on PlateShift, pick your printer and convert. The copy opens in Flash Studio, OrcaSlicer or Creality Print set up for your printer, with its plates, objects and painted colours.</p></details>
+      <details><summary>Does it keep the colours of multicolour models?</summary><p>Yes. Painted colours move to your printer's toolheads (Creator 5) or slots (AD5X, Creality CFS). If a project has more colours than your printer, similar ones are merged for you, and you can change any of it.</p></details>
+      <details><summary>Which printers does PlateShift support?</summary><p>Flashforge Creator 5 Pro, Creator 5, AD5X, Adventurer 5M and 5M Pro, and the Creality K1, K1C, K1 SE, K1 Max (with or without the CFS), K2, K2 Plus, K2 Pro, K2 SE and SparkX i7 and i8.</p></details>
+      <details><summary>Do I need anything else installed?</summary><p>A slicer that has your printer's profiles: Flash Studio or OrcaSlicer for Flashforge, OrcaSlicer or Creality Print for Creality. PlateShift reads the profiles your slicer already installed.</p></details>
+      <details><summary>Is it free? Does it upload my files?</summary><p>It's free and open source (GNU AGPL). It never connects to the internet: everything happens on your own computer, and your original file is never changed.</p></details>
+      <details><summary>Does it work on Mac and Linux?</summary><p>Yes. There's a Windows program and a Mac app to download, and Linux runs it from source with Python.</p></details>
+    </div>
   </div>
 </section>
 </main>
