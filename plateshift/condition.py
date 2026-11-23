@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Evaluate OrcaSlicer's compatible_printers_condition expressions.
 
 They look like:  printer_model == "X" and nozzle_diameter[0] == 0.4

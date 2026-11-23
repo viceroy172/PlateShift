@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Painted colour data in 3MF triangles (paint_color / mmu_segmentation).
 
 Each triangle stores a bitstream as hex, last nibble first. The stream is a

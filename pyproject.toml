@@ -7,7 +7,7 @@ name = "plateshift"
 dynamic = ["version"]
 description = "Convert Bambu Studio / MakerWorld 3MF projects for other printers, offline."
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-or-later" }
 requires-python = ">=3.11"
 dependencies = []
 

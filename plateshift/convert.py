@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Convert Bambu Studio 3MF projects to another printer's presets."""
 
 from __future__ import annotations

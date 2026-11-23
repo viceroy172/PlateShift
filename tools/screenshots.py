@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Drive the PlateShift window through the README states and screenshot each.
 
     python tools/screenshots.py --profiles <folder> --out <folder> [--slicer <program>]

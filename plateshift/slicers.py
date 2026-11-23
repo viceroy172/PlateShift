@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Find installed slicers and open files in them.
 
 Windows: the registry (desktop installs under Uninstall, store apps under App

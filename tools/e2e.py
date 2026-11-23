@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """End-to-end check against a real slicer install: build a realistic Bambu
 Studio project from the slicer's own BBL profiles, convert it for each target
 printer and test-slice the result.

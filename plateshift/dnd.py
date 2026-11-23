@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Accept files dropped from Explorer onto a Tk window (Windows), or onto the dock
 icon (macOS). No extra packages."""
 

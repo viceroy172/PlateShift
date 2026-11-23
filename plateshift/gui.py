@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Tk front end."""
 
 from __future__ import annotations
@@ -558,7 +559,7 @@ class App:
         link.pack(anchor="w", pady=(10, 0))
         link.bind("<Button-1>", lambda e: webbrowser.open(REPO_URL))
         ttk.Label(box, wraplength=380, justify="left", foreground=MUTED,
-                  text="Source code, help and new versions are on GitHub. Open source under the MIT licence. "
+                  text="Source code, help and new versions are on GitHub. Free software under the GNU AGPL v3 or later. "
                        "Not affiliated with Bambu Lab, Flashforge, Creality or MakerWorld.").pack(
             anchor="w", pady=(10, 0))
         ttk.Button(box, text="Close", command=win.destroy).pack(anchor="e", pady=(14, 0))

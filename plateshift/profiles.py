@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Load Orca-style system profiles and the user's own filament presets.
 
 A vendor comes either as json files (<root>/<Vendor>/{machine,process,filament}/*.json)

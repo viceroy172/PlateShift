@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """PlateShift's icon as small PNGs, made by tools/make_icon.py. Don't edit by hand."""
 
 ICONS = {

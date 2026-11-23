@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Check every object sits inside its plate after conversion."""
 
 from __future__ import annotations

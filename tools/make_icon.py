@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Draw PlateShift's icon (the website's logo) and write every format the apps need.
 
 Needs Pillow, only for this script: python tools/make_icon.py
@@ -60,7 +61,8 @@ def main() -> None:
     icon.save(packaging / "icon.ico", sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
     icon.save(packaging / "icon.icns")
     sizes = (16, 32, 48, 64, 128)
-    lines = ['"""PlateShift\'s icon as small PNGs, made by tools/make_icon.py. Don\'t edit by hand."""', "",
+    lines = ["# SPDX-License-Identifier: AGPL-3.0-or-later",
+             '"""PlateShift\'s icon as small PNGs, made by tools/make_icon.py. Don\'t edit by hand."""', "",
              "ICONS = {"]
     for s in sizes:
         lines.append(f'    {s}: "{base64.b64encode(png(icon, s)).decode()}",')

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Read OrcaSlicer's packed system profiles (<vendor>.opc, OrcaSlicer 2.4+).
 
 Layout, as described in OrcaSlicer's docs/HLSD/preset-cache.md:

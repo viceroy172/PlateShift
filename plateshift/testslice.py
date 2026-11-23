@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Slice a converted project with Flash Studio's command line to prove it works."""
 
 from __future__ import annotations
