@@ -1,0 +1,53 @@
+name: website
+
+# put the landing page in website/ on https://cleland.co.za/PlateShift/ whenever it
+# changes. the ftp account can only reach that folder; its login lives in the
+# repo's secrets, which forks and pull requests never get
+on:
+  push:
+    branches: [main]
+    paths: ["website/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website
+  cancel-in-progress: false
+
+env:
+  FTP_HOST: linuxweb08.imagi-hosting.co.za   # the certificate is for this name, so it can be checked
+  SITE: https://cleland.co.za/PlateShift/
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: upload over encrypted ftp
+        env:
+          FTP_USER: ${{ secrets.PLATESHIFT_FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.PLATESHIFT_FTP_PASSWORD }}
+        run: |
+          if [ -z "$FTP_USER" ] || [ -z "$FTP_PASSWORD" ]; then
+            echo "::error::the PLATESHIFT_FTP_USER and PLATESHIFT_FTP_PASSWORD secrets aren't set"; exit 1
+          fi
+          # the login goes to curl through a file, so it never appears in the logs or process list
+          umask 077
+          printf 'machine %s\nlogin %s\npassword %s\n' "$FTP_HOST" "$FTP_USER" "$FTP_PASSWORD" > "$RUNNER_TEMP/netrc"
+          cd website
+          find . -type f | sed 's|^\./||' | sort | while read -r file; do
+            echo "uploading $file"
+            curl --silent --show-error --fail --ssl-reqd --ftp-create-dirs --retry 3 \
+              --netrc-file "$RUNNER_TEMP/netrc" -T "$file" "ftp://$FTP_HOST/$file"
+          done
+          rm -f "$RUNNER_TEMP/netrc"
+      - name: the live page is the new one
+        run: |
+          sleep 5
+          curl --silent --show-error --fail -o live.html "$SITE"
+          cmp live.html website/index.html && echo "live page matches website/index.html"
+          for f in $(cd website && find images -type f); do
+            curl --silent --show-error --fail -o /dev/null "$SITE$f" && echo "$f is live"
+          done
