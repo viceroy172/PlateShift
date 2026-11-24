@@ -1,0 +1,68 @@
+name: linux
+
+# builds PlateShift-x86_64.AppImage: one file that runs on most linux desktops
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    # the oldest supported ubuntu, so the app runs on older systems too (glibc)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: tk for the window
+        run: sudo apt-get update -q && sudo apt-get install -y -q libtk8.6 libtcl8.6 xvfb
+      - name: build the app folder
+        run: |
+          python -c "import tkinter; print('tk', tkinter.TkVersion)"
+          python -m pip install --quiet pyinstaller
+          python -m PyInstaller --noconfirm --windowed --name PlateShift --paths . packaging/plateshift_app.py
+      - name: make the AppImage
+        run: |
+          set -e
+          mkdir -p AppDir/usr/bin
+          cp -r dist/PlateShift/. AppDir/usr/bin/
+          cp packaging/icon.png AppDir/plateshift.png
+          cat > AppDir/plateshift.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=PlateShift
+          Comment=Convert Bambu Studio / MakerWorld 3MF projects for other printers
+          Exec=PlateShift %F
+          Icon=plateshift
+          Terminal=false
+          Categories=Graphics;3DGraphics;
+          MimeType=model/3mf;application/vnd.ms-3mfdocument;
+          EOF
+          sed -i 's/^ *//' AppDir/plateshift.desktop
+          cat > AppDir/AppRun <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/PlateShift" "$@"
+          EOF
+          sed -i 's/^ *//' AppDir/AppRun
+          chmod +x AppDir/AppRun
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir PlateShift-x86_64.AppImage
+          ls -l PlateShift-x86_64.AppImage
+      - name: the AppImage runs
+        run: |
+          ./PlateShift-x86_64.AppImage --appimage-extract-and-run --version
+          ./PlateShift-x86_64.AppImage --appimage-extract-and-run printers | head -3
+          # the window opens (on a virtual screen) and closes again
+          timeout 20 xvfb-run -a ./PlateShift-x86_64.AppImage --appimage-extract-and-run & pid=$!
+          sleep 12
+          kill -0 $pid && echo "window still running after 12 s" && kill $pid || (echo "window exited early"; exit 1)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PlateShift-linux
+          path: PlateShift-x86_64.AppImage

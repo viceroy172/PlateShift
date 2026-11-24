@@ -15,7 +15,7 @@ import webbrowser
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from . import REPO_URL, __version__, bugreport, catalogue, dnd, typeahead
+from . import REPO_URL, __version__, bugreport, catalogue, dnd, integration, typeahead
 from .icon_data import ICONS
 from .preview import plate_pictures
 from .price import cost_lines, filament_total, money, parse_price, regional_currency
@@ -251,6 +251,10 @@ class App:
         self.update_tester()
         self.update_processes()
         ttk.Button(top, text="About", command=self.about).grid(row=1, column=2, sticky="e", pady=(8, 0))
+        ttk.Button(top, text="Options…", command=self.options).grid(row=2, column=2, sticky="e", pady=(8, 0))
+        self.watcher = None
+        if self.settings.get("watch_downloads"):
+            root.after(1000, self.start_watching)
         if sys.platform == "darwin":
             root.createcommand("tkAboutDialog", self.about)  # the app menu's "About PlateShift"
 
@@ -873,6 +877,98 @@ class App:
         ttk.Button(buttons, text="Licences…", command=self.licences).pack(side="right", padx=(0, 6))
         ttk.Button(buttons, text="Report a problem…", command=self.report_problem).pack(side="left")
         win.bind("<Escape>", lambda e: win.destroy())
+
+    # --- options: open with, the downloads folder ---------------------------
+
+    def options(self):
+        if getattr(self, "options_window", None) is not None and self.options_window.winfo_exists():
+            self.options_window.lift()
+            return
+        win = self.options_window = tk.Toplevel(self.root)
+        win.title("PlateShift options")
+        win.resizable(False, False)
+        win.transient(self.root)
+        box = ttk.Frame(win, padding=16)
+        box.pack(fill="both", expand=True)
+
+        ttk.Label(box, text="Open 3MF files with PlateShift", font=ui_font(10, "bold")).pack(anchor="w")
+        state = ttk.Label(box, foreground=MUTED, wraplength=440, justify="left")
+        state.pack(anchor="w", pady=(2, 6))
+        row = ttk.Frame(box)
+        row.pack(anchor="w")
+
+        def refresh():
+            if sys.platform == "darwin":
+                state.configure(text="On a Mac, PlateShift is already in Finder's Open With menu for 3MF files.")
+                return
+            on = integration.has_open_with()
+            state.configure(text=("PlateShift is in the Open with list for 3MF files. Your default app for them "
+                                  "hasn't changed." if on else
+                                  "Adds PlateShift to the Open with list when you right-click a 3MF file. "
+                                  "Your default app for 3MF files doesn't change."))
+            add.configure(state="disabled" if on else "normal")
+            remove.configure(state="normal" if on else "disabled")
+
+        def change(fn):
+            try:
+                fn()
+            except OSError as exc:
+                messagebox.showerror("PlateShift options", f"That didn't work: {exc}", parent=win)
+            refresh()
+        add = ttk.Button(row, text="Add to Open with", command=lambda: change(integration.add_open_with))
+        remove = ttk.Button(row, text="Remove", command=lambda: change(integration.remove_open_with))
+        if sys.platform != "darwin":
+            add.pack(side="left")
+            remove.pack(side="left", padx=(6, 0))
+        refresh()
+
+        ttk.Separator(box).pack(fill="x", pady=12)
+        ttk.Label(box, text="New downloads", font=ui_font(10, "bold")).pack(anchor="w")
+        watch = tk.BooleanVar(value=bool(self.settings.get("watch_downloads")))
+        ttk.Checkbutton(box, variable=watch, text="Open new 3MF downloads in PlateShift while it's open").pack(
+            anchor="w", pady=(4, 0))
+        ttk.Label(box, foreground=MUTED, wraplength=440, justify="left",
+                  text=f"Watches {integration.downloads_folder()}. When a 3MF file finishes downloading, "
+                       "for example from MakerWorld, PlateShift comes forward with it ready to convert.").pack(
+            anchor="w", pady=(2, 0))
+
+        def watch_changed(*_):
+            self.settings["watch_downloads"] = watch.get()
+            save_settings(self.settings)
+            self.start_watching() if watch.get() else self.stop_watching()
+        watch.trace_add("write", watch_changed)
+        ttk.Button(box, text="Close", command=win.destroy).pack(anchor="e", pady=(14, 0))
+        win.bind("<Escape>", lambda e: win.destroy())
+        self.options_vars = {"watch": watch}  # for tests
+
+    def start_watching(self, folder: Path | None = None):
+        self.watcher = integration.DownloadWatcher(folder or integration.downloads_folder(),
+                                                   [t.suffix for t in self.targets])
+        self.root.after(2000, self.watch_tick)
+
+    def stop_watching(self):
+        self.watcher = None
+
+    def watch_tick(self):
+        watcher = self.watcher
+        if watcher is None:
+            return
+        for path in watcher.check():
+            self.write(f"New download: {path.name}")
+            self.bring_forward()
+            if not self.busy:
+                self.handle_files([path])
+                break  # one at a time; the next check offers the rest
+            watcher.done.discard(path)   # busy: offer it again later
+        if self.watcher is watcher:
+            self.root.after(2000, self.watch_tick)
+
+    def bring_forward(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.attributes("-topmost", True)
+        self.root.after(300, lambda: self.root.attributes("-topmost", False))
+        self.root.focus_force()
 
     # --- problem reports ---------------------------------------------------
 

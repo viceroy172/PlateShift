@@ -172,6 +172,26 @@ class WindowTests(unittest.TestCase):
         labels[REPO_URL].event_generate("<Button-1>")
         self.assertEqual(opened, [REPO_URL])
 
+    def test_new_downloads_open_in_the_panel(self):
+        app = self.app
+        folder = self.tmp / "downloads"
+        folder.mkdir()
+        app.options()
+        self.assertFalse(app.options_vars["watch"].get())
+        app.start_watching(folder)
+        src = self.six_colours()
+        shutil.copy(src, folder / "Dragon.3mf")
+        app.watcher.since = 0          # as if the watch began before the download
+        app.watcher.check()            # first sighting; the next tick sees it finished
+        self.wait(lambda: getattr(app, "plan_source", None) == folder / "Dragon.3mf" and self.panel_ready())
+        self.assertIn("New download: Dragon.3mf", self.log())
+        app.stop_watching()
+        self.assertIsNone(app.watcher)
+        # the option is remembered
+        app.options_vars["watch"].set(True)
+        self.assertTrue(json.loads((self.tmp / "settings.json").read_text())["watch_downloads"])
+        app.stop_watching()
+
     def test_report_a_problem_after_a_run(self):
         app = self.app
         app.printer.set(FOUR.label)

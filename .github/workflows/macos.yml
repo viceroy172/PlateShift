@@ -80,6 +80,9 @@ jobs:
           version=$(python -c "import plateshift; print(plateshift.__version__)")
           plutil -replace CFBundleShortVersionString -string "$version" dist/PlateShift.app/Contents/Info.plist
           plutil -replace CFBundleVersion -string "$version" dist/PlateShift.app/Contents/Info.plist
+          # listed in Finder's Open With for .3mf files, without becoming their default app
+          plutil -replace CFBundleDocumentTypes -json             '[{"CFBundleTypeName":"3MF project","CFBundleTypeRole":"Viewer","LSHandlerRank":"Alternate","CFBundleTypeExtensions":["3mf"]}]'             dist/PlateShift.app/Contents/Info.plist
+          plutil -lint dist/PlateShift.app/Contents/Info.plist
           # editing Info.plist breaks the signature pyinstaller made, and macOS then
           # calls the downloaded app "damaged". sign it again (ad hoc) after the edit
           codesign --verify --deep --strict dist/PlateShift.app \
