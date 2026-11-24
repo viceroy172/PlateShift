@@ -219,6 +219,24 @@ weight and cost, or what went wrong, with any warnings. **Report a problem…** 
 in About) makes a zip of the last run's project files, the log and version details,
 then opens a new GitHub issue for you to attach it to. Nothing is sent by itself.
 
+**Send to printer…** (in the results window, after converting one file for a
+Flashforge or Creality printer) sends the print straight to the printer on your
+network. It uses the test slice's G-code, or slices the project first, and for a
+project with several plates you pick the plate. It only uploads the file unless you
+tick **Start printing now**, so check the bed is clear and the right filament is
+loaded before you do.
+
+- **Flashforge** (Creator 5, AD5X, Adventurer 5M): give the printer's IP address,
+  serial number and check code (on its screen: the serial number under About, the
+  check code where LAN mode is switched on). Each filament goes to the slot or
+  toolhead with the same number, and PlateShift warns when a slot holds a different
+  material.
+- **Creality** on stock firmware (K1 family, K2, SparkX): just the printer's IP
+  address. No Helper Script or root access is needed.
+
+Addresses and check codes are remembered on this computer only, and are left out of
+problem reports.
+
 **Then open in** opens a single converted file in a slicer that has the printer's
 profiles: Flash Studio or OrcaSlicer for the Flashforge printers, Creality Print or
 OrcaSlicer for the Creality ones. The choice is remembered per printer in
