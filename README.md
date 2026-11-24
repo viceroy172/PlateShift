@@ -11,8 +11,11 @@ file locally.
 |---|---|---|
 | ![PlateShift window ready to convert](screenshots/main_screen.png) | ![Colours of a project mapped to toolheads and presets](screenshots/file_selected.png) | ![A finished conversion with its report](screenshots/done_results.png) |
 
-Supported targets (more are mostly a matter of adding a line to
-`plateshift/printers.py`):
+Built-in targets (more are mostly a matter of adding a line to
+`plateshift/printers.py`). In the window, **Add printer…** adds any other printer
+your slicers have profiles for (OrcaSlicer, Flash Studio or Creality Print): pick its
+brand and model, and for a one-nozzle printer with a colour unit (AMS, CFS, MMU…) how
+many slots it has.
 
 | Key       | Printer                  | Colours at once | Profiles from |
 |-----------|--------------------------|-----------------|---------------|
@@ -170,6 +173,11 @@ reads your slicer's filament profiles; a price changed in PlateShift doesn't cha
 profile (the slicer may show that filament as modified in the converted project). The
 currency comes from your computer's regional settings and can be changed in the same
 window.
+
+When a run ends, a small **results window** sums up each file: print time, filament
+weight and cost, or what went wrong, with any warnings. **Report a problem…** there (and
+in About) makes a zip of the last run's project files, the log and version details,
+then opens a new GitHub issue for you to attach it to. Nothing is sent by itself.
 
 **Then open in** opens a single converted file in a slicer that has the printer's
 profiles: Flash Studio or OrcaSlicer for the Flashforge printers, Creality Print or

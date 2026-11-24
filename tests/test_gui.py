@@ -172,11 +172,74 @@ class WindowTests(unittest.TestCase):
         labels[REPO_URL].event_generate("<Button-1>")
         self.assertEqual(opened, [REPO_URL])
 
+    def test_report_a_problem_after_a_run(self):
+        app = self.app
+        app.printer.set(FOUR.label)
+        src = self.six_colours()
+        app.handle_files([src])
+        self.wait(lambda: self.panel_ready() and app.plan_target.toolheads == 4)
+        app.convert_plan()
+        self.wait(lambda: not app.busy and app.last_output is not None)
+        self.assertEqual(app.last_run, [src, app.last_output])
+        opened, revealed = [], []
+        saved = (self.gui.webbrowser.open, self.gui.reveal, self.gui.messagebox.askokcancel)
+        self.gui.webbrowser.open, self.gui.reveal = opened.append, revealed.append
+        self.gui.messagebox.askokcancel = lambda *a, **k: False
+        try:
+            app.report_problem()          # said no: nothing made
+            self.assertEqual(revealed, [])
+            self.gui.messagebox.askokcancel = lambda *a, **k: True
+            app.report_problem()
+        finally:
+            self.gui.webbrowser.open, self.gui.reveal, self.gui.messagebox.askokcancel = saved
+        self.assertEqual(len(revealed), 1)
+        with zipfile.ZipFile(revealed[0]) as z:
+            self.assertIn("files/six.3mf", z.namelist())
+            self.assertIn("files/six - Four.3mf", z.namelist())
+            self.assertIn("six - Four.3mf", z.read("log.txt").decode())
+        self.assertIn("/issues/new?", opened[0])
+
+    def test_add_and_remove_a_printer(self):
+        app = self.app
+        root = self.tmp / "profiles"
+        real = self.gui.catalogue.vendors
+        self.gui.catalogue.vendors = lambda roots=None: {"Testvendor": root}
+        self.addCleanup(setattr, self.gui.catalogue, "vendors", real)
+        before = len(app.targets)
+        app.printer_wizard()
+        app.wizard["brand"].set("Testvendor")
+        self.assertEqual(app.wizard["model"].get(), "Test C5P")
+        # it's already a built-in printer (FOUR uses the same profile), so it's just chosen
+        app.wizard["add"]()
+        self.assertEqual(len(app.targets), before)
+        self.assertEqual(app.printer.get(), FOUR.label)
+
+        # without the built-in ones it's added as yours
+        app.targets = [t for t in app.targets if t.toolheads != 4]  # FOUR and CREALITY share its profile
+        app.printer.set(ONE.label)
+        app.printer_wizard()
+        app.wizard["brand"].set("Testvendor")
+        app.wizard["add"]()
+        added = app.target()
+        self.assertEqual(added.label, "Testvendor Test C5P")
+        self.assertEqual(added.toolheads, 4)
+        saved = json.loads((self.tmp / "settings.json").read_text())
+        self.assertEqual([d["label"] for d in saved["my_printers"]], ["Testvendor Test C5P"])
+        self.assertIn("Testvendor Test C5P", [t.label for t in app.my_printers()])
+        self.assertEqual(app.model.get(), "Test C5P")
+
+        app.remove_printer(added)
+        self.assertNotIn(added.label, [t.label for t in app.targets])
+        self.assertNotEqual(app.printer.get(), added.label)
+        saved = json.loads((self.tmp / "settings.json").read_text())
+        self.assertEqual(saved["my_printers"], [])
+
     def test_brand_then_model(self):
         gui = self.gui
         other = Target("other", "Otherbrand Speedy", "Otherbrand", MACHINE, "0.20mm Standard @T", 1, "Speedy")
         gui.TARGETS = [FOUR, ONE, other]
         app = self.app
+        app.targets = list(gui.TARGETS)
         app.show_printer()
         self.assertEqual(list(app.brand_picker.cget("values")), ["Testvendor", "Otherbrand"])
         app.brand.set("Otherbrand")

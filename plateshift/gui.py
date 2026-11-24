@@ -15,7 +15,7 @@ import webbrowser
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from . import REPO_URL, __version__, dnd, typeahead
+from . import REPO_URL, __version__, bugreport, catalogue, dnd, typeahead
 from .icon_data import ICONS
 from .preview import plate_pictures
 from .price import cost_lines, filament_total, money, parse_price, regional_currency
@@ -83,10 +83,6 @@ def _explain(exc: Exception) -> str:
     if isinstance(exc, (ConversionError, OSError)):
         return str(exc)
     return f"unexpected problem ({type(exc).__name__}: {exc}). Please report this with the file."
-
-
-def _brands() -> list[str]:
-    return list(dict.fromkeys(t.vendor for t in TARGETS))
 
 
 def _model_name(target) -> str:
@@ -202,7 +198,9 @@ class App:
         top.pack(fill="x")
         top.columnconfigure(1, weight=1)
         ttk.Label(top, text="Target printer").grid(row=0, column=0, sticky="w")
-        labels = [t.label for t in TARGETS]
+        # the built-in printers, then the ones you added
+        self.targets = list(TARGETS) + self.my_printers()
+        labels = [t.label for t in self.targets]
         saved_printer = self.settings.get("printer")
         # the chosen printer's full label; the brand and model boxes show it in two parts
         self.printer = tk.StringVar(value=saved_printer if saved_printer in labels else labels[0])
@@ -215,6 +213,7 @@ class App:
         self.model = tk.StringVar()
         self.picker = ttk.Combobox(pickers, textvariable=self.model, state="readonly", width=30)
         self.picker.pack(side="left", padx=(6, 0))
+        ttk.Button(pickers, text="Add printer…", command=self.printer_wizard).pack(side="left", padx=(6, 0))
         typeahead.attach(self.picker)
         self._syncing = False
         self.show_printer()
@@ -316,7 +315,14 @@ class App:
     # --- settings and small helpers -------------------------------------
 
     def target(self):
-        return next(t for t in TARGETS if t.label == self.printer.get())
+        return next((t for t in self.targets if t.label == self.printer.get()), self.targets[0])
+
+    def brands(self) -> list[str]:
+        return list(dict.fromkeys(t.vendor for t in self.targets))
+
+    def my_printers(self) -> list:
+        found = [catalogue.from_dict(d) for d in self.settings.get("my_printers", []) if isinstance(d, dict)]
+        return [t for t in found if t is not None]
 
     def library(self, target):
         """(target with the preset names this pc has, its profile library)"""
@@ -855,7 +861,148 @@ class App:
         buttons.pack(fill="x", pady=(14, 0))
         ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right")
         ttk.Button(buttons, text="Licences…", command=self.licences).pack(side="right", padx=(0, 6))
+        ttk.Button(buttons, text="Report a problem…", command=self.report_problem).pack(side="left")
         win.bind("<Escape>", lambda e: win.destroy())
+
+    # --- problem reports ---------------------------------------------------
+
+    def report_problem(self):
+        """zip the last run's files with the log, then open a new GitHub issue to attach it to"""
+        files = [f for f in getattr(self, "last_run", []) if Path(f).is_file()]
+        what = (f"the {len(files)} project file{'s' if len(files) != 1 else ''} from the last conversion, "
+                if files else "")
+        if not messagebox.askokcancel(
+                "Report a problem",
+                f"PlateShift will make a zip with {what}the log, version details and your PlateShift "
+                "settings, so the problem can be looked into.\n\nNothing is sent anywhere. Your browser then "
+                "opens a new GitHub issue, and you choose whether to attach the zip.", parent=self.root):
+            return
+        about = bugreport.details(self.target().label, {s.label: str(s.exe) for s in self.slicers.values()})
+        folder = Path(files[0]).parent if files else Path.home()
+        try:
+            path = bugreport.make(folder, files, self.log.get("1.0", "end"), about, self.settings)
+        except OSError as exc:
+            messagebox.showerror("Report a problem", f"Couldn't make the zip: {exc}", parent=self.root)
+            return
+        self.write(f"Problem report saved: {path}\n")
+        reveal(path)
+        webbrowser.open(bugreport.issue_url("Problem: ", about))
+
+    # --- adding printers ---------------------------------------------------
+
+    def printer_wizard(self):
+        """pick a printer from the profiles your slicers have installed"""
+        if getattr(self, "wizard_window", None) is not None and self.wizard_window.winfo_exists():
+            self.wizard_window.lift()
+            return
+        win = self.wizard_window = tk.Toplevel(self.root)
+        win.title("Add a printer")
+        win.resizable(False, False)
+        win.transient(self.root)
+        box = ttk.Frame(win, padding=16)
+        box.pack(fill="both", expand=True)
+        ttk.Label(box, wraplength=440, justify="left",
+                  text="Choose a printer your slicers have profiles for. It's added to the brand and model "
+                       "boxes, and PlateShift converts for it with those profiles.").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        found = catalogue.vendors()
+        ttk.Label(box, text="Brand").grid(row=1, column=0, sticky="w")
+        brand = tk.StringVar()
+        brands = ttk.Combobox(box, textvariable=brand, values=list(found), state="readonly", width=30)
+        brands.grid(row=1, column=1, sticky="w", padx=(8, 0))
+        typeahead.attach(brands)
+        ttk.Label(box, text="Printer").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        model = tk.StringVar()
+        models = ttk.Combobox(box, textvariable=model, state="readonly", width=40)
+        models.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        typeahead.attach(models)
+        about = ttk.Label(box, foreground=MUTED, wraplength=440, justify="left")
+        about.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=(4, 0))
+        slots_label = ttk.Label(box, text="Colours at once")
+        slots = tk.StringVar(value="1")
+        slots_box = ttk.Spinbox(box, from_=1, to=16, textvariable=slots, width=5)
+        slots_hint = ttk.Label(box, foreground=MUTED, wraplength=440, justify="left",
+                               text="More than 1 if a colour unit (AMS, CFS, MMU…) feeds its nozzle.")
+        listed: dict[str, catalogue.Machine] = {}
+        if not found:
+            about.configure(text="No printer profiles found. Install OrcaSlicer, Flash Studio or Creality Print.")
+
+        def brand_picked(*_):
+            win.configure(cursor="watch")
+            win.update_idletasks()
+            try:
+                listed.clear()
+                listed.update({m.label: m for m in catalogue.machines(brand.get(), found[brand.get()])})
+            finally:
+                win.configure(cursor="")
+            models.configure(values=list(listed))
+            model.set(next(iter(listed), ""))
+
+        def model_picked(*_):
+            machine = listed.get(model.get())
+            for w in (slots_label, slots_box, slots_hint):
+                w.grid_remove()
+            if machine is None:
+                about.configure(text="")
+                return
+            heads = f"{machine.nozzles} toolheads" if machine.nozzles > 1 else "one nozzle"
+            about.configure(text=f"{heads} · {machine.nozzle} mm · profiles from {machine.slicer}")
+            if machine.nozzles == 1:
+                slots_label.grid(row=4, column=0, sticky="w", pady=(8, 0))
+                slots_box.grid(row=4, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
+                slots_hint.grid(row=5, column=1, sticky="w", padx=(8, 0))
+        brand.trace_add("write", brand_picked)
+        model.trace_add("write", model_picked)
+
+        def add():
+            machine = listed.get(model.get())
+            if machine is None:
+                return
+            try:
+                colours = int(slots.get()) if machine.nozzles == 1 else machine.nozzles
+            except ValueError:
+                colours = 1
+            target = catalogue.make_target(machine, max(1, min(colours, 16)))
+            # a printer PlateShift lists already: just choose it
+            same = next((t for t in self.targets if t.toolheads == target.toolheads and target.machine in
+                         {t.machine, *(m for m, _ in t.alternatives)}), None)
+            if same is None:
+                saved = self.settings.setdefault("my_printers", [])
+                saved[:] = [d for d in saved if d.get("key") != target.key] + [catalogue.to_dict(target)]
+                save_settings(self.settings)
+                self.targets = list(TARGETS) + self.my_printers()
+                same = target
+            win.destroy()
+            self.printer.set(same.label)
+            self.show_printer()
+
+        mine = self.my_printers()
+        if mine:
+            ttk.Separator(box).grid(row=7, column=0, columnspan=3, sticky="we", pady=12)
+            ttk.Label(box, text="Printers you added", font=ui_font(9, "bold")).grid(row=8, column=0, columnspan=3,
+                                                                                    sticky="w")
+            for i, t in enumerate(mine):
+                ttk.Label(box, text=t.label).grid(row=9 + i, column=0, columnspan=2, sticky="w", pady=1)
+                ttk.Button(box, text="Remove", command=lambda t=t: self.remove_printer(t)).grid(
+                    row=9 + i, column=2, sticky="e", pady=1)
+        buttons = ttk.Frame(box)
+        buttons.grid(row=50, column=0, columnspan=3, sticky="e", pady=(14, 0))
+        ttk.Button(buttons, text="Add", command=add).pack(side="right")
+        ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right", padx=6)
+        win.bind("<Escape>", lambda e: win.destroy())
+        self.wizard = {"brand": brand, "model": model, "slots": slots, "add": add}  # for tests
+
+    def remove_printer(self, target):
+        saved = self.settings.get("my_printers", [])
+        saved[:] = [d for d in saved if d.get("key") != target.key]
+        save_settings(self.settings)
+        self.targets = list(TARGETS) + self.my_printers()
+        if self.printer.get() == target.label:
+            self.printer.set(self.targets[0].label)
+        self.show_printer()
+        if getattr(self, "wizard_window", None) is not None and self.wizard_window.winfo_exists():
+            self.wizard_window.destroy()
+            self.printer_wizard()
 
     def licences(self):
         """PlateShift's licence and those of what the app carries with it"""
@@ -966,9 +1113,9 @@ class App:
         target = self.target()
         self._syncing = True
         try:
-            self.brand_picker.configure(values=_brands())
+            self.brand_picker.configure(values=self.brands())
             self.brand.set(target.vendor)
-            self.picker.configure(values=[_model_name(t) for t in TARGETS if t.vendor == target.vendor])
+            self.picker.configure(values=[_model_name(t) for t in self.targets if t.vendor == target.vendor])
             self.model.set(_model_name(target))
         finally:
             self._syncing = False
@@ -976,7 +1123,7 @@ class App:
     def brand_changed(self):
         if self._syncing:
             return
-        models = [t for t in TARGETS if t.vendor == self.brand.get()]
+        models = [t for t in self.targets if t.vendor == self.brand.get()]
         if not models:
             return
         leaving = self.target()  # so coming back to its brand returns to it
@@ -988,7 +1135,7 @@ class App:
     def model_changed(self):
         if self._syncing:
             return
-        target = next((t for t in TARGETS if t.vendor == self.brand.get() and _model_name(t) == self.model.get()),
+        target = next((t for t in self.targets if t.vendor == self.brand.get() and _model_name(t) == self.model.get()),
                       None)
         if target and target.label != self.printer.get():
             self.printer.set(target.label)
@@ -1065,6 +1212,7 @@ class App:
         process = self.chosen_process() if target.key == self.target().key else None
         keep_design = self.keep_design.get()
         prices, currency = dict(self.prices), self.currency_symbol()
+        self.run_files = list(files)
         self.set_busy(True)
         self.show.pack_forget()
         self.open_button.pack_forget()
@@ -1139,6 +1287,8 @@ class App:
 
     def finish(self, converted: list[Path], failed: list[Path], slice_failed: list[Path]):
         self.set_busy(False)
+        # what a problem report would need
+        self.last_run = list(dict.fromkeys([*getattr(self, "run_files", []), *converted]))
         self.progress.configure(value=self.progress["maximum"])
         ok = converted and not failed and not slice_failed
         if ok:
@@ -1202,6 +1352,7 @@ class App:
         buttons = ttk.Frame(box)
         buttons.pack(fill="x", pady=(14, 0))
         ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right")
+        ttk.Button(buttons, text="Report a problem…", command=self.report_problem).pack(side="left")
         if self.last_output is not None and any("error" not in r for r in results):
             ttk.Button(buttons, text="Show in folder", command=self.show_in_folder).pack(side="right", padx=6)
         win.bind("<Escape>", lambda e: win.destroy())
