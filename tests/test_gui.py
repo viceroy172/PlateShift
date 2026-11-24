@@ -508,6 +508,25 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(str(app.checker.cget("text")), "Test slice (needs OrcaSlicer)")
         self.assertEqual(str(app.checker.cget("state")), "disabled")
 
+    def test_test_slicer_follows_then_open_in(self):
+        # found by hand: "Then open in" said OrcaSlicer, the test slice used Flash Studio
+        app = self.app
+        flash = self.gui.Slicer("Flash Studio", Path("flash"))
+        orca = self.gui.Slicer("OrcaSlicer", Path("orca"))
+        creality = self.gui.Slicer("Creality Print", Path("cp"))
+        app.slicers = {"Flash Studio": flash, "OrcaSlicer": orca, "Creality Print": creality}
+        app.printer.set(FOUR.label)
+        app.update_slicer_choices()
+        self.assertIs(app.tester, flash)                       # "Don't open": the printer's first
+        app.open_choice.set("OrcaSlicer")
+        self.assertIs(app.tester, orca)
+        self.assertIn("OrcaSlicer", str(app.checker.cget("text")))
+        app.open_choice.set("Flash Studio")
+        self.assertIs(app.tester, flash)
+        app.printer.set(CREALITY.label)                        # creality print can't test slice
+        app.open_choice.set("Creality Print")
+        self.assertIs(app.tester, orca)
+
     def test_changing_printer_rebuilds_the_panel_for_it(self):
         # found by hand: panel kept the old printer's single toolhead and presets
         app = self.app

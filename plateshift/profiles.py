@@ -149,6 +149,9 @@ class ProfileLibrary:
         # presets from the printer brand's own folder (not the shared library); a
         # brand preset that names no printers suits all of that brand's printers
         self._brand: dict[str, set[str]] = {k: set() for k in KINDS}
+        # name -> folder -> preset, for packed presets: the vendor and the shared library
+        # can both have a base preset by the same name (fdm_filament_common)
+        self._packed_in: dict[str, dict[str, dict[str, dict]]] = {k: {} for k in KINDS}
         for folder in (vendor, SHARED_LIBRARY):
             base = self.root / folder
             packed_file = self.root / f"{folder}.opc"
@@ -160,6 +163,7 @@ class ProfileLibrary:
                 for kind in KINDS:
                     for preset in (packed or {}).get(kind, []):
                         self._packed[kind].setdefault(preset["name"], preset)
+                        self._packed_in[kind].setdefault(preset["name"], {})[folder] = preset
                         if folder == vendor:
                             self._brand[kind].add(preset["name"])
                 continue
@@ -194,34 +198,58 @@ class ProfileLibrary:
     def _system(self, kind: str, name: str) -> bool:
         return bool(self._files[kind].get(name)) or name in self._packed[kind]
 
+    def _folder(self, path: Path) -> str:
+        try:
+            return path.relative_to(self.root).parts[0]
+        except ValueError:
+            return ""
+
     def _raw_profile(self, kind: str, name: str) -> dict:
-        for path in self._files[kind].get(name, []):
+        return self._locate(kind, name)[0]
+
+    def _locate(self, kind: str, name: str, prefer: str | None = None) -> tuple[dict, str | None]:
+        """(the preset, the folder it's in). prefer: the folder of the preset that asked
+        for it. the slicers look a parent up beside its child first: a shared-library
+        filament's fdm_filament_common is the library's (1.75 mm), not the vendor's,
+        which can be for other printers (flashforge's says 2.85 mm)"""
+        paths = self._files[kind].get(name, [])
+        if prefer:
+            for path in paths:
+                if self._folder(path) == prefer:
+                    data = self._load(path)
+                    if data.get("name", path.stem) == name:
+                        return data, prefer
+            if prefer in self._packed_in[kind].get(name, {}):
+                return self._packed_in[kind][name][prefer], prefer
+        for path in paths:
             data = self._load(path)
             if data.get("name", path.stem) == name:
-                return data
+                return data, self._folder(path)
         if name in self._packed[kind]:
-            return self._packed[kind][name]
+            folders = self._packed_in[kind].get(name, {})
+            return self._packed[kind][name], next(iter(folders), None)
         if name in self._user.get(kind, {}):
-            return self._load(self._user[kind][name][1])
+            return self._load(self._user[kind][name][1]), None
         if name in self._renamed[kind]:
-            return self._raw_profile(kind, self._renamed[kind][name])
+            return self._locate(kind, self._renamed[kind][name], prefer)
         # file name doesn't match, scan everthing
         for paths in self._files[kind].values():
             for path in paths:
                 data = self._load(path)
                 renamed = data.get("renamed_from") or []
                 if data.get("name") == name or name in ([renamed] if isinstance(renamed, str) else renamed):
-                    return data
+                    return data, self._folder(path)
         raise KeyError(f"No {kind} profile named {name!r} under {self.root}")
 
-    def _own(self, kind: str, raw: dict, depth: int = 0) -> dict:
+    def _own(self, kind: str, raw: dict, depth: int = 0, folder: str | None = None) -> dict:
         """a preset's own values with its includes layered underneath"""
         includes = raw.get("_includes") or raw.get("include") or []
         if not includes or depth > 10:
             return raw
         merged: dict = {}
         for inc in ([includes] if isinstance(includes, str) else includes):
-            merged.update(self._own(kind, self._raw_profile(kind, inc), depth + 1))
+            found, where = self._locate(kind, inc, folder)
+            merged.update(self._own(kind, found, depth + 1, where))
         merged.update(raw)
         return merged
 
@@ -229,18 +257,22 @@ class ProfileLibrary:
         key = (kind, name)
         if key not in self._resolved:
             chain = []
+            folders = []
             seen = set()
-            current = name
+            current, folder = name, None
             while current:
                 if current in seen:
                     raise ValueError(f"Inheritance loop in {kind} profile {name!r}")
                 seen.add(current)
-                raw = self._raw_profile(kind, current)
+                # each parent is looked for beside its child first, as the slicers do
+                raw, where = self._locate(kind, current, folder)
+                folder = where or folder
                 chain.append(raw)
+                folders.append(folder)
                 current = raw.get("inherits") or ""
             merged: dict = {}
-            for raw in reversed(chain):
-                merged.update(self._own(kind, raw))
+            for raw, where in zip(reversed(chain), reversed(folders)):
+                merged.update(self._own(kind, raw, folder=where))
             merged["name"] = name
             # these don't inherit, except user presets take them from their parent
             user = name in self._user.get(kind, {}) and not self._system(kind, name)

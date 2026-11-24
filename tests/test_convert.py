@@ -724,3 +724,22 @@ class ChooseFilamentTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiameterCheckTests(unittest.TestCase):
+    def test_a_different_filament_diameter_is_flagged(self):
+        from types import SimpleNamespace
+
+        from plateshift.convert import Report, _check_diameters
+        src = {"filament_diameter": ["1.75", "1.75", "1.75"]}
+        plan = SimpleNamespace(merge=[1, 2, 2])
+        report = Report(Path("a.3mf"), Path("b.3mf"), "", "")
+        _check_diameters(src, {"filament_diameter": ["1.75", "1.75"]}, plan, report)
+        self.assertEqual(report.warnings, [])
+        _check_diameters(src, {"filament_diameter": ["1.75", "2.85"]}, plan, report)
+        self.assertEqual(report.warnings, [
+            "toolhead 2's filament is set up for 2.85 mm filament, the project used 1.75 mm; "
+            "check that filament preset before printing"])
+        quiet = Report(Path("a.3mf"), Path("b.3mf"), "", "")
+        _check_diameters({}, {"filament_diameter": ["2.85"]}, plan, quiet)   # nothing to compare with
+        self.assertEqual(quiet.warnings, [])

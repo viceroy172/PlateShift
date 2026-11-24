@@ -1409,6 +1409,25 @@ def _set_prices(settings: dict, prices: dict[str, float], report: Report) -> Non
         report.prices[i] = _as_float(cost, 0.0)
 
 
+def _check_diameters(src: dict, settings: dict, plan: Plan, report: Report) -> None:
+    """warn when a toolhead's filament diameter isn't the one the project was made for.
+    a 2.85 mm setting for 1.75 mm filament slices without complaint and prints with a
+    third of the plastic (found on a Creator 5 Pro)"""
+    before = _as_list(src.get("filament_diameter"))
+    after = _as_list(settings.get("filament_diameter"))
+    if not before or not after:
+        return
+    for slot in sorted(set(plan.merge)):
+        wanted = {round(_as_float(before[i], 0.0), 2) for i, head in enumerate(plan.merge)
+                  if head == slot and i < len(before)} - {0.0}
+        have = round(_as_float(after[min(slot, len(after)) - 1], 0.0), 2)
+        if wanted and have and have not in wanted:
+            was = " or ".join(f"{d:g}" for d in sorted(wanted))
+            report.warnings.append(
+                f"{report.slot_word.lower()} {slot}'s filament is set up for {have:g} mm filament, the project "
+                f"used {was} mm; check that filament preset before printing")
+
+
 def _check_colours(colours: dict[int, str] | None) -> dict[int, str]:
     bad = [c for c in (colours or {}).values() if not re.fullmatch(r"#?[0-9A-Fa-f]{6}", str(c).strip())]
     if bad:
@@ -1454,6 +1473,7 @@ def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
         if target.toolheads == 1 and len(plan.filaments) > 1:
             job.report.warnings.append("all colours print in one filament on this printer")
         _set_prices(settings, prices or {}, job.report)
+        _check_diameters(src, settings, plan, job.report)
         old_box = _bed_box(src.get("printable_area"))
         new_box = _bed_box(settings.get("printable_area"))
         if keep is not None:
