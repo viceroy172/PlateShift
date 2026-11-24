@@ -110,6 +110,45 @@ class WindowTests(unittest.TestCase):
             s = json.loads(z.read("Metadata/project_settings.config"))
         self.assertEqual((s["print_settings_id"], s["wall_loops"]), ("0.20mm Mine @T", "5"))
 
+    def test_licences_window(self):
+        from plateshift import REPO_URL
+        from plateshift.licence_texts import LICENCES
+        self.assertEqual([n for n, _, _ in LICENCES], ["PlateShift", "Python", "Tcl/Tk", "PyInstaller"])
+        self.app.about()
+        buttons = []
+
+        def walk(w):
+            for c in w.winfo_children():
+                if c.winfo_class() == "TButton":
+                    buttons.append(c)
+                walk(c)
+        walk(self.app.about_window)
+        next(b for b in buttons if str(b.cget("text")) == "Licences…").invoke()
+        win = self.app.licences_window
+        texts = []
+
+        def find(w):
+            for c in w.winfo_children():
+                if c.winfo_class() == "Text":
+                    texts.append(c)
+                if c.winfo_class() == "Listbox":
+                    self.names = c
+                find(c)
+        find(win)
+        shown = texts[0].get("1.0", "end")
+        self.assertIn("WITHOUT ANY WARRANTY", shown)  # the notice the AGPL asks for
+        self.assertIn(REPO_URL, shown)
+        self.assertIn("GNU AFFERO GENERAL PUBLIC LICENSE", shown)
+        self.root.update()
+        self.names.selection_clear(0, "end")
+        self.names.selection_set(1)
+        self.names.event_generate("<<ListboxSelect>>")
+        self.root.update()
+        self.assertIn("PYTHON SOFTWARE FOUNDATION LICENSE", texts[0].get("1.0", "end"))
+        self.assertEqual(str(texts[0].cget("state")), "disabled")
+        self.app.licences()  # a second click brings the same window forward
+        self.assertIs(self.app.licences_window, win)
+
     def test_about_shows_the_version_and_github_link(self):
         from plateshift import REPO_URL, __version__
         opened = []
@@ -234,6 +273,64 @@ class WindowTests(unittest.TestCase):
         next(w for w in bar if str(w.cget("text")) == ">").invoke()
         tick.invoke()  # untick plate 2
         self.assertEqual(app.chosen_plates(), [1, 3])
+
+    def test_price_comes_from_the_preset_and_the_cog_changes_it(self):
+        app = self.app
+        app.printer.set(FOUR.label)
+        app.handle_files([self.six_colours()])
+        self.wait(lambda: self.panel_ready() and app.plan_target.toolheads == 4)
+        pla = app.head_preset(1)
+        self.assertEqual(app.price_of(pla), (app.preset_costs.get(pla), False))
+        self.assertIn(str(app.cogs[1].cget("fg")), (self.gui.MUTED,))
+        app.price_dialog(1)
+        win = app.price_window
+        entries = [w for w in win.winfo_children()[0].winfo_children() if w.winfo_class() == "TEntry"]
+        price, currency = entries
+        price.delete(0, "end")
+        price.insert(0, "abc")
+        win.event_generate("<Return>")
+        self.assertTrue(win.winfo_exists())  # nonsense isn't taken
+        price.delete(0, "end")
+        price.insert(0, "R 349,50")
+        currency.delete(0, "end")
+        currency.insert(0, "R")
+        ok = next(w for w in win.winfo_children()[0].winfo_children()[-1].winfo_children()
+                  if str(w.cget("text")) == "OK")
+        ok.invoke()
+        self.assertFalse(win.winfo_exists())
+        self.assertEqual(app.price_of(pla), (349.5, True))
+        same = [t for t in app.cogs if app.head_preset(t) == pla]
+        self.assertTrue(all(str(app.cogs[t].cget("fg")) == self.gui.BRAND_BLUE for t in same))
+        self.assertIn("R 349.50/kg, your price", app.cogs[1].tooltip)
+        saved = json.loads((self.tmp / "settings.json").read_text())
+        self.assertEqual(saved["filament_prices"], {pla: 349.5})
+        self.assertEqual(saved["currency"], "R")
+        # and back to the preset's own
+        app.price_dialog(1)
+        reset = next(w for w in app.price_window.winfo_children()[0].winfo_children()[-1].winfo_children()
+                     if str(w.cget("text")) == "Use the preset's price")
+        reset.invoke()
+        self.assertFalse(app.price_of(pla)[1])
+
+    def test_cost_is_shown_after_the_test_slice(self):
+        from plateshift.testslice import SliceResult
+        app = self.app
+        app.printer.set(FOUR.label)
+        app.handle_files([self.six_colours()])
+        self.wait(lambda: self.panel_ready() and app.plan_target.toolheads == 4)
+        app.settings["currency"] = "$"
+        app.prices[app.head_preset(1)] = 20.0
+        app.tester = type("Fake", (), {"label": "Fake slicer"})()
+        app.check.set(True)
+        real = self.gui.test_slice
+        self.gui.test_slice = lambda slicer, out: SliceResult(True, 1, 600, 50.0, grams_each=[50.0])
+        try:
+            app.convert_plan()
+            self.wait(lambda: not app.busy and app.last_output is not None)
+        finally:
+            self.gui.test_slice = real
+        self.assertIn("Filament cost: $1.00", self.log())
+        self.assertIn("Toolhead 1: 50.0 g at $20.00/kg = $1.00", self.log())
 
     def test_filaments_are_remembered_per_toolhead(self):
         app = self.app

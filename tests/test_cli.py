@@ -139,6 +139,21 @@ class ConvertCommandTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue((self.tmp / "three - T - plate 2 (2).3mf").exists())  # never replaced
 
+    def test_prices_go_into_the_project(self):
+        import json
+        import zipfile
+        src = self.three_plates()
+        out = self.tmp / "priced.3mf"
+        code, _, err = self.run_cli("convert", str(src), "--price", "Generic PLA @T=300", "-o", str(out))
+        self.assertEqual(code, 0, err)
+        with zipfile.ZipFile(out) as z:
+            s = json.loads(z.read("Metadata/project_settings.config"))
+        priced = [c for n, c in zip(s["filament_settings_id"], s["filament_cost"]) if n == "Generic PLA @T"]
+        self.assertTrue(priced and all(c == "300" for c in priced))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cli.main(["convert", str(src), "--price", "Generic PLA @T"])
+        self.assertEqual(cli._parse_price("Odd=Name @T=R 1,5"), ("Odd=Name @T", 1.5))
+
     def test_plate_mistakes_are_explained(self):
         src = self.three_plates()
         code, _, err = self.run_cli("convert", str(src), "--plates", "4", "-o", str(self.tmp / "o.3mf"))

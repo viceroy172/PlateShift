@@ -8,6 +8,7 @@ from pathlib import Path
 from . import REPO_URL, __version__
 from .convert import (ConversionError, analyse, convert, default_output, parse_plates, plate_names,
                       plate_output, process_choices, unique_output)
+from .price import cost_lines, parse_price, regional_currency
 from .printers import BY_KEY, TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
 from .slicers import CAN_TEST, find_slicers, test_slicer
@@ -33,6 +34,14 @@ def _parse_plates(text: str) -> list[int]:
         return parse_plates(text)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"{exc}; use plate numbers, e.g. 1,3-4") from None
+
+
+def _parse_price(text: str) -> tuple[str, float]:
+    name, sep, amount = text.rpartition("=")
+    price = parse_price(amount) if sep else None
+    if not name.strip() or price is None:
+        raise argparse.ArgumentTypeError('use "PRESET=PRICE PER KG", e.g. "Generic PLA @FF C5P=350"')
+    return name.strip(), price
 
 
 def _parse_merge(text: str) -> dict[int, int]:
@@ -78,6 +87,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="save each plate as its own file, '... - plate 2.3mf'")
     conv.add_argument("-t", "--test-slice", action="store_true",
                       help="slice the result to check it works (Flash Studio, or OrcaSlicer without it)")
+    conv.add_argument("--price", action="append", type=_parse_price, default=[], metavar='"PRESET=PRICE"',
+                      help="price per kg of a filament preset, instead of the preset's own; "
+                           "--test-slice shows what the print costs")
+    conv.add_argument("--currency", help="currency symbol for prices (default: your regional settings)")
     conv.add_argument("--profiles", type=Path, help="folder holding <Vendor>/machine, process, filament")
 
     ins = sub.add_parser("inspect", help="show a project's colours and how they would be mapped")
@@ -199,7 +212,7 @@ def _convert(args, target, lib) -> int:
             try:
                 report = convert(source, output, target, lib, dict(args.filament), merge=merge, plan=plan,
                                  colours=dict(args.colour), process=args.process,
-                                 keep_design=args.keep_design, plates=plates)
+                                 keep_design=args.keep_design, plates=plates, prices=dict(args.price))
             except ConversionError as exc:
                 failures += 1
                 _err(f"{source.name}: {exc}")
@@ -213,6 +226,10 @@ def _convert(args, target, lib) -> int:
                 result = test_slice(tester, output)
                 print(f"  {result.line()}")
                 failures += not result.ok
+                for line in cost_lines(result.grams_each, report.slots, report.prices,
+                                       args.currency or regional_currency(), report.slot_word,
+                                       hint='add --price "PRESET=PRICE"'):
+                    print(f"  {line}")
     return 1 if failures else 0
 
 

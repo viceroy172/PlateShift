@@ -167,6 +167,7 @@ class Report:
     repainted: int = 0
     removed_gcode: bool = False
     plates: list[int] = field(default_factory=list)   # plates kept, when not all of them
+    prices: dict[int, float] = field(default_factory=dict)   # slot -> filament price per kg
     plate_count: int = 0
     warnings: list[str] = field(default_factory=list)
     extra: list[str] = field(default_factory=list)
@@ -1389,6 +1390,21 @@ def _fresh_info(info: zipfile.ZipInfo, name: str | None = None) -> zipfile.ZipIn
     return fresh
 
 
+def _set_prices(settings: dict, prices: dict[str, float], report: Report) -> None:
+    """your prices over the presets' own (filament_cost, per kg); the slicer then
+    shows the same cost. notes each slot's price in the report"""
+    names = _as_list(settings.get("filament_settings_id"))
+    costs = [str(c) for c in _as_list(settings.get("filament_cost"))]
+    costs += [costs[-1] if costs else "0"] * (len(names) - len(costs))
+    for i, name in enumerate(names):
+        if name in prices:
+            costs[i] = f"{prices[name]:g}"
+    if names:
+        settings["filament_cost"] = costs[:max(len(names), 1)]
+    for i, cost in enumerate(costs[:len(names)], start=1):
+        report.prices[i] = _as_float(cost, 0.0)
+
+
 def _check_colours(colours: dict[int, str] | None) -> dict[int, str]:
     bad = [c for c in (colours or {}).values() if not re.fullmatch(r"#?[0-9A-Fa-f]{6}", str(c).strip())]
     if bad:
@@ -1400,7 +1416,7 @@ def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
             overrides: dict[int, str] | None = None, merge: list[int] | None = None,
             plan: Plan | None = None, colours: dict[int, str] | None = None,
             process: str | None = None, keep_design: bool = False,
-            plates: list[int] | None = None) -> Report:
+            plates: list[int] | None = None, prices: dict[str, float] | None = None) -> Report:
     """write `output`, the project in `source` set up for `target`.
     merge: toolhead per source colour (default: the plan's). overrides: toolhead
     -> preset name. colours: toolhead -> #RRGGBB to show instead of the designer's.
@@ -1408,6 +1424,7 @@ def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
     keep_design says whether the designer's layer height, walls, infill, supports
     and so on still go over it. plates: the plate numbers (from 1) to keep; the
     rest are left out and the kept ones renumbered. default: all of them.
+    prices: filament preset -> price per kg, put over the presets' own prices.
     Every problem with the file comes back as a ConversionError."""
     source, output = Path(source), Path(output)
     if source.resolve() == output.resolve():
@@ -1432,6 +1449,7 @@ def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
                                      process, keep_design)
         if target.toolheads == 1 and len(plan.filaments) > 1:
             job.report.warnings.append("all colours print in one filament on this printer")
+        _set_prices(settings, prices or {}, job.report)
         old_box = _bed_box(src.get("printable_area"))
         new_box = _bed_box(settings.get("printable_area"))
         if keep is not None:

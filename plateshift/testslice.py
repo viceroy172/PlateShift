@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -18,6 +18,7 @@ class SliceResult:
     seconds: int = 0
     grams: float = 0.0
     error: str = ""
+    grams_each: list[float] = field(default_factory=list)   # per filament, all plates together
 
     def line(self) -> str:
         if not self.ok:
@@ -30,6 +31,7 @@ class SliceResult:
 
 _TIME = re.compile(r"^; estimated printing time \(normal mode\) = (.+)$")
 _GRAMS = re.compile(r"^; total filament used \[g\] = ([\d.]+)")
+_EACH = re.compile(r"^; filament used \[g\] = (.+)$")
 
 
 def _seconds(text: str) -> int:
@@ -80,7 +82,20 @@ def _run(slicer, project: Path, timeout: int) -> SliceResult:
                         result.seconds += _seconds(m.group(1))
                     elif (m := _GRAMS.match(line)):
                         result.grams += float(m.group(1))
+                    elif (m := _EACH.match(line)):
+                        _add(result.grams_each, m.group(1))
         return result
+
+
+def _add(totals: list[float], text: str) -> None:
+    for i, part in enumerate(text.split(",")):
+        try:
+            grams = float(part)
+        except ValueError:
+            continue
+        if i >= len(totals):
+            totals.extend([0.0] * (i + 1 - len(totals)))
+        totals[i] += grams
 
 
 # lines with "error" in them that aren't the reason a slice failed

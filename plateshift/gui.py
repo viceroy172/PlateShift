@@ -18,6 +18,7 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 from . import REPO_URL, __version__, dnd, typeahead
 from .icon_data import ICONS
 from .preview import plate_pictures
+from .price import cost_lines, money, parse_price, regional_currency
 from .convert import (ConversionError, _family, analyse, convert, default_output, lead_colour, plate_names,
                       plate_output, process_choices, suggest, unique_output)
 from .printers import TARGETS
@@ -108,6 +109,43 @@ def _display(profile: dict) -> str:
     return f"{profile['name']}  (yours, {profile['_user']})" if profile.get("_user") else profile["name"]
 
 
+def _preset_cost(preset: dict) -> float | None:
+    """a filament preset's own price per kg (orca's filament_cost), if it has one"""
+    value = preset.get("filament_cost")
+    if isinstance(value, list):
+        value = value[0] if value else None
+    try:
+        cost = float(value)
+    except (TypeError, ValueError):
+        return None
+    return cost if cost > 0 else None
+
+
+def tooltip(widget) -> None:
+    """show widget.tooltip while the mouse is over it"""
+    if getattr(widget, "_tip_bound", False):
+        return
+    widget._tip_bound = True
+    tip: list = []
+
+    def show(_event):
+        text = getattr(widget, "tooltip", "")
+        if not text or tip:
+            return
+        win = tk.Toplevel(widget)
+        win.wm_overrideredirect(True)
+        win.wm_geometry(f"+{widget.winfo_rootx() + 16}+{widget.winfo_rooty() + widget.winfo_height() + 2}")
+        tk.Label(win, text=text, bg="#ffffe1", relief="solid", bd=1, padx=6, pady=2, font=ui_font(9)).pack()
+        tip.append(win)
+
+    def hide(_event):
+        while tip:
+            tip.pop().destroy()
+    widget.bind("<Enter>", show, add="+")
+    widget.bind("<Leave>", hide, add="+")
+    widget.bind("<Button-1>", hide, add="+")
+
+
 def _blue_progress(style: ttk.Style) -> str:
     """a progress bar style in the website's blue. native windows and mac bars
     ignore colours, so borrow clam's bar element, which takes them"""
@@ -133,6 +171,11 @@ class App:
         self._quiet = False
         self._calls: queue.Queue = queue.Queue()
         self.settings = load_settings()
+        # price per kg of each filament preset, and the currency they're in
+        self.prices: dict[str, float] = {}
+        for name, value in (self.settings.get("filament_prices") or {}).items():
+            if isinstance(value, (int, float)) and value >= 0:
+                self.prices[name] = float(value)
         self.settings.pop("open_in", None)  # old single choice, now per printer
         self.slicers: dict[str, Slicer] = {s.label: s for s in find_slicers()}
         self.tester: Slicer | None = None
@@ -471,6 +514,8 @@ class App:
         options = sorted(plan.candidates, key=lambda p: (not p.get("_user"), p["name"].lower()))
         self.preset_names = {_display(p): p["name"] for p in options}
         self.head_vars: dict[int, tk.StringVar] = {}
+        self.cogs: dict[int, tk.Label] = {}
+        self.preset_costs = {p["name"]: _preset_cost(p) for p in plan.candidates}
         self.head_user_set: set[int] = set()
         self.head_colours: dict[int, str] = {}
         # filaments the user picked for each toolhead of this printer before
@@ -600,6 +645,7 @@ class App:
             if var is None:
                 var = self.head_vars[t] = tk.StringVar()
                 var.trace_add("write", lambda *_, t=t: self._quiet or self.head_user_set.add(t))
+                var.trace_add("write", lambda *_, t=t: self.update_cog(t))
             note = ""
             if t not in self.head_user_set:
                 name, note = suggest(plan, merge, t)
@@ -618,13 +664,109 @@ class App:
                                    width=30, state="readonly")
             presets.grid(row=row, column=2, sticky="we", padx=(8, 0), pady=1)
             typeahead.attach(presets)
-            if t in self.head_usual and t not in self.head_user_set:
-                ttk.Label(self.heads_frame, text="your usual", foreground=MUTED).grid(
-                    row=row, column=3, sticky="w", padx=(6, 0))
+            cog = tk.Label(self.heads_frame, text="⚙", cursor="hand2", font=ui_font(12),
+                           **({"bg": self.bg} if self.bg else {}))
+            cog.grid(row=row, column=3, padx=(4, 0))
+            cog.bind("<Button-1>", lambda e, t=t: self.price_dialog(t))
+            self.cogs[t] = cog
+            self.update_cog(t)
             if note:  # e.g. no TPU preset, so PLA was used
                 row += 1
                 ttk.Label(self.heads_frame, text=f"⚠ {note}", foreground=WARN_COLOUR).grid(
                     row=row, column=2, sticky="w", padx=(8, 0))
+
+    # --- filament prices ---------------------------------------------------
+
+    def head_preset(self, t: int) -> str | None:
+        return self.preset_names.get(self.head_vars[t].get())
+
+    def price_of(self, preset: str | None) -> tuple[float | None, bool]:
+        """(price per kg, whether it's yours rather than the preset's)"""
+        if preset in self.prices:
+            return self.prices[preset], True
+        return self.preset_costs.get(preset or ""), False
+
+    def update_cog(self, t: int):
+        cog = self.cogs.get(t)
+        if cog is None or not cog.winfo_exists():
+            return
+        price, yours = self.price_of(self.head_preset(t))
+        cog.configure(fg=BRAND_BLUE if yours else MUTED)
+        where = "your price" if yours else "from the filament preset"
+        cog.tooltip = (f"{money(price, self.currency_symbol())}/kg, {where}. Click to change it."
+                       if price else "No price. Click to set one.")
+        tooltip(cog)
+
+    def currency_symbol(self) -> str:
+        return self.settings.get("currency") or regional_currency()
+
+    def price_dialog(self, t: int):
+        """change the price of the filament on toolhead t, for every project"""
+        preset = self.head_preset(t)
+        if not preset:
+            return
+        win = tk.Toplevel(self.root)
+        win.title("Filament price")
+        win.resizable(False, False)
+        win.transient(self.root)
+        self.price_window = win
+        box = ttk.Frame(win, padding=16)
+        box.pack(fill="both", expand=True)
+        ttk.Label(box, text=preset, font=ui_font(10, "bold")).grid(row=0, column=0, columnspan=3, sticky="w")
+        own = self.preset_costs.get(preset)
+        currency = tk.StringVar(value=self.currency_symbol())
+        ttk.Label(box, foreground=MUTED, text=(f"The preset's price: {money(own, currency.get())} per kg" if own
+                                               else "The preset has no price.")).grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(2, 10))
+        ttk.Label(box, text="Price per kg").grid(row=2, column=0, sticky="w")
+        current, yours = self.price_of(preset)
+        value = tk.StringVar(value=f"{current:g}" if current else "")
+        entry = ttk.Entry(box, textvariable=value, width=10, justify="right")
+        entry.grid(row=2, column=1, sticky="w", padx=(8, 0))
+        entry.focus_set()
+        entry.select_range(0, "end")
+        ttk.Label(box, text="Currency").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(box, textvariable=currency, width=6, justify="center").grid(
+            row=3, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        problem = ttk.Label(box, foreground=FAIL_COLOUR)
+        problem.grid(row=4, column=0, columnspan=3, sticky="w")
+        ttk.Label(box, foreground=MUTED, font=ui_font(8), wraplength=300, justify="left",
+                  text="PlateShift only reads the price from your slicer's filament profile. A price "
+                       "changed here is used by PlateShift and saved in converted files, but the "
+                       "profile itself isn't changed.").grid(row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        def done(price: float | None, reset: bool = False):
+            if reset:
+                self.prices.pop(preset, None)
+            elif price is not None:
+                self.prices[preset] = price
+            symbol = currency.get().strip()
+            if symbol:
+                self.settings["currency"] = symbol
+            self.settings["filament_prices"] = dict(sorted(self.prices.items()))
+            save_settings(self.settings)
+            for other in self.cogs:
+                self.update_cog(other)
+            win.destroy()
+
+        def ok(_event=None):
+            text = value.get().strip()
+            if not text:
+                return done(None, reset=True)
+            price = parse_price(text)
+            if price is None:
+                problem.configure(text="That isn't a price; type a number like 350.")
+                return
+            done(price)
+        buttons = ttk.Frame(box)
+        buttons.grid(row=6, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="OK", command=ok).pack(side="right")
+        ttk.Button(buttons, text="Cancel", command=win.destroy).pack(side="right", padx=6)
+        if yours:
+            ttk.Button(buttons, text="Use the preset's price", command=lambda: done(None, reset=True)).pack(
+                side="right")
+        win.bind("<Return>", ok)
+        win.bind("<Escape>", lambda e: win.destroy())
 
     # --- toolhead colours --------------------------------------------------
 
@@ -709,7 +851,62 @@ class App:
                   text="Source code, help and new versions are on GitHub. Free software under the GNU AGPL v3 or later. "
                        "Not affiliated with Bambu Lab, Flashforge, Creality or MakerWorld.").pack(
             anchor="w", pady=(10, 0))
-        ttk.Button(box, text="Close", command=win.destroy).pack(anchor="e", pady=(14, 0))
+        buttons = ttk.Frame(box)
+        buttons.pack(fill="x", pady=(14, 0))
+        ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right")
+        ttk.Button(buttons, text="Licences…", command=self.licences).pack(side="right", padx=(0, 6))
+        win.bind("<Escape>", lambda e: win.destroy())
+
+    def licences(self):
+        """PlateShift's licence and those of what the app carries with it"""
+        if getattr(self, "licences_window", None) is not None and self.licences_window.winfo_exists():
+            self.licences_window.lift()
+            return
+        from .licence_texts import LICENCES
+        win = self.licences_window = tk.Toplevel(self.root)
+        win.title("PlateShift licences")
+        win.geometry("820x560")
+        win.minsize(560, 360)
+        box = ttk.Frame(win, padding=12)
+        box.pack(fill="both", expand=True)
+        box.columnconfigure(1, weight=1)
+        box.rowconfigure(0, weight=1)
+        names = tk.Listbox(box, width=16, exportselection=False, activestyle="none", font=ui_font(10))
+        for name, _, _ in LICENCES:
+            names.insert("end", name)
+        names.grid(row=0, column=0, sticky="ns", padx=(0, 10))
+        right = ttk.Frame(box)
+        right.grid(row=0, column=1, sticky="nsew")
+        summary = ttk.Label(right, font=ui_font(9, "bold"), wraplength=600, justify="left")
+        summary.pack(anchor="w", pady=(0, 6))
+        text = tk.Text(right, wrap="word", font=mono_font(9), relief="solid", bd=1, padx=8, pady=6)
+        scroll = ttk.Scrollbar(right, command=text.yview)
+        text.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
+        notice = (f"PlateShift {__version__}\nCopyright (C) 2026 PlateShift contributors\n{REPO_URL}\n\n"
+                  "This program is free software: you can redistribute it and/or modify it under the terms "
+                  "of the GNU Affero General Public License as published by the Free Software Foundation, "
+                  "either version 3 of the License, or (at your option) any later version.\n\n"
+                  "This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; "
+                  "without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. "
+                  "See the GNU Affero General Public License below for more details.\n\n"
+                  "The source code of this version is at the address above.\n\n" + "─" * 40 + "\n\n")
+
+        def show(_event=None):
+            picked = names.curselection()
+            index = picked[0] if picked else 0
+            name, about, body = LICENCES[index]
+            summary.configure(text=f"{name}: {about}")
+            text.configure(state="normal")
+            text.delete("1.0", "end")
+            text.insert("1.0", (notice if index == 0 else "") + body)
+            text.configure(state="disabled")
+            text.yview_moveto(0)
+        names.bind("<<ListboxSelect>>", show)
+        names.selection_set(0)
+        show()
+        ttk.Button(box, text="Close", command=win.destroy).grid(row=1, column=1, sticky="e", pady=(10, 0))
         win.bind("<Escape>", lambda e: win.destroy())
 
     def update_tester(self):
@@ -717,7 +914,7 @@ class App:
         target = self.target()
         self.tester = test_slicer(self.slicers, target)
         if self.tester:
-            self.checker.configure(text=f"Test slice with {self.tester.label} afterwards",
+            self.checker.configure(text=f"Test slice and price with {self.tester.label} afterwards",
                                    state="disabled" if self.busy else "normal")
         else:
             needs = " or ".join(n for n in target.slicers if n in CAN_TEST)
@@ -867,6 +1064,7 @@ class App:
         testing = self.check.get() and self.tester is not None
         process = self.chosen_process() if target.key == self.target().key else None
         keep_design = self.keep_design.get()
+        prices, currency = dict(self.prices), self.currency_symbol()
         self.set_busy(True)
         self.show.pack_forget()
         self.open_button.pack_forget()
@@ -896,7 +1094,7 @@ class App:
                             report = convert(source, output, target, lib, overrides or {},
                                              merge=merge, plan=plan if len(files) == 1 else None,
                                              colours=colours, process=process, keep_design=keep_design,
-                                             plates=chosen)
+                                             plates=chosen, prices=prices)
                         except Exception as exc:  # one bad file mustn't stop the rest
                             failed.append(source)
                             self.write(f"✗ {source.name}: not converted", "fail")
@@ -917,6 +1115,9 @@ class App:
                                        "ok" if result.ok else "fail")
                             if not result.ok:
                                 slice_failed.append(output)
+                            for line in cost_lines(result.grams_each, report.slots, report.prices, currency,
+                                                   report.slot_word):
+                                self.write(f"  {line}")
                             step += 1
                             self.later(lambda n=step: self.progress.configure(value=n))
                         self.write("")
