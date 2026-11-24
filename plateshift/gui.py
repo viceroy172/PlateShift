@@ -564,6 +564,16 @@ class App:
         ttk.Label(frame, text=more, foreground=MUTED, font=ui_font(8), justify="center").pack(pady=(3, 0))
 
     def show_plates(self, source: Path, images):
+        # only ever one: clicking again brings it forward, another file's replaces it
+        old = getattr(self, "plates_window", None)
+        if old is not None and old.winfo_exists():
+            if getattr(self, "plates_source", None) == source:
+                old.deiconify()
+                old.lift()
+                old.focus_set()
+                return
+            old.destroy()
+        self.plates_source = source
         win = tk.Toplevel(self.root)
         win.title(source.name)
         win.transient(self.root)

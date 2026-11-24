@@ -265,6 +265,13 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(len(self.app.plate_images), 3)  # two plates and the small copy
         self.app.show_plates(src, self.app.plate_images[:2])
         self.assertTrue(self.app.plates_window.winfo_exists())
+        # clicking again doesn't open a second one
+        first = self.app.plates_window
+        self.app.show_plates(src, self.app.plate_images[:2])
+        self.assertIs(self.app.plates_window, first)
+        viewers = [w for w in self.root.winfo_children()
+                   if isinstance(w, tk.Toplevel) and w.title() == src.name]
+        self.assertEqual(len(viewers), 1)
 
     def three_plates(self) -> Path:
         step = 256 * 1.2
