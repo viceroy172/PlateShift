@@ -331,6 +331,31 @@ class WindowTests(unittest.TestCase):
             self.gui.test_slice = real
         self.assertIn("Filament cost: $1.00", self.log())
         self.assertIn("Toolhead 1: 50.0 g at $20.00/kg = $1.00", self.log())
+        # and the results window sums it up
+        win = app.results_window
+        texts = []
+
+        def walk(w):
+            for c in w.winfo_children():
+                if c.winfo_class() in ("Label", "TLabel"):
+                    texts.append(str(c.cget("text")))
+                walk(c)
+        walk(win)
+        self.assertIn("six - Four.3mf", texts)
+        self.assertIn("10 min  ·  50 g  ·  $1.00", texts)
+
+    def test_result_lines(self):
+        from plateshift.testslice import SliceResult
+        lines = self.gui.App.result_lines
+        self.assertEqual(lines({"name": "a", "error": "bad zip"})[0][0], "Not converted: bad zip")
+        self.assertEqual(lines({"name": "a", "warnings": []})[0][0], "Converted (not test sliced)")
+        failed = lines({"name": "a", "slice": SliceResult(False, error="tower clash"), "warnings": []})
+        self.assertEqual(failed[0][0], "Test slice failed: tower clash")
+        ok = lines({"name": "a", "slice": SliceResult(True, 2, 7500, 53.2), "cost": (1.25, 1), "currency": "R",
+                    "warnings": ["w1", "w2", "w3", "w4", "w5"]})
+        self.assertEqual(ok[0][0], "2 h 5 min  ·  53 g  ·  2 plates  ·  R 1.25 so far")
+        self.assertIn("1 filament without a price", ok[1][0])
+        self.assertEqual(ok[-1][0], "⚠ and 2 more in the log")
 
     def test_filaments_are_remembered_per_toolhead(self):
         app = self.app

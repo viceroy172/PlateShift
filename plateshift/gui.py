@@ -18,7 +18,7 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 from . import REPO_URL, __version__, dnd, typeahead
 from .icon_data import ICONS
 from .preview import plate_pictures
-from .price import cost_lines, money, parse_price, regional_currency
+from .price import cost_lines, filament_total, money, parse_price, regional_currency
 from .convert import (ConversionError, _family, analyse, convert, default_output, lead_colour, plate_names,
                       plate_output, process_choices, suggest, unique_output)
 from .printers import TARGETS
@@ -1075,6 +1075,7 @@ class App:
         def work():
             nonlocal target
             converted, failed, slice_failed = [], [], []
+            self.results = []   # one summary per file, for the results window
             step = 0
             started = 0  # files begun, so a crash outside one knows which are left
             try:
@@ -1097,12 +1098,15 @@ class App:
                                              plates=chosen, prices=prices)
                         except Exception as exc:  # one bad file mustn't stop the rest
                             failed.append(source)
+                            self.results.append({"name": source.name, "error": _explain(exc)})
                             self.write(f"✗ {source.name}: not converted", "fail")
                             self.write(f"  {_explain(exc)}\n")
                             step += (2 if testing else 1) * len(jobs)
                             self.later(lambda n=step: self.progress.configure(value=n))
                             break  # the same problem would stop every plate
                         converted.append(report.output)
+                        summary = {"name": report.output.name, "warnings": list(report.warnings)}
+                        self.results.append(summary)
                         lines = report.lines()
                         self.write(f"✓ {lines[0]}", "ok")
                         self.write("\n".join(lines[1:]))
@@ -1115,6 +1119,10 @@ class App:
                                        "ok" if result.ok else "fail")
                             if not result.ok:
                                 slice_failed.append(output)
+                            summary["slice"] = result
+                            if result.ok:
+                                summary["cost"] = filament_total(result.grams_each, report.prices)
+                                summary["currency"] = currency
                             for line in cost_lines(result.grams_each, report.slots, report.prices, currency,
                                                    report.slot_word):
                                 self.write(f"  {line}")
@@ -1156,6 +1164,79 @@ class App:
         self.status.configure(text=text, fg=colour, font=ui_font(10, "bold"))
         self.write(text.lstrip("✓✗ ").join(("── ", " ──")) + "\n", "done" if ok else "fail")
         self.root.bell()
+        self.show_results(text, ok)
+
+    def show_results(self, headline: str, ok: bool):
+        """a small window with each file's outcome, so it isn't missed in the log"""
+        results = getattr(self, "results", [])
+        if not results:
+            return
+        old = getattr(self, "results_window", None)
+        if old is not None and old.winfo_exists():
+            old.destroy()
+        win = self.results_window = tk.Toplevel(self.root)
+        win.title("Conversion results")
+        win.resizable(False, False)
+        win.transient(self.root)
+        box = ttk.Frame(win, padding=16)
+        box.pack(fill="both", expand=True)
+        tk.Label(box, text=headline.split(", opening")[0], fg=OK_COLOUR if ok else FAIL_COLOUR,
+                 font=ui_font(11, "bold"), wraplength=460, justify="left",
+                 **({"bg": self.bg} if self.bg else {})).pack(anchor="w", pady=(0, 8))
+        shown = results[:8]
+        for item in shown:
+            row = ttk.Frame(box)
+            row.pack(fill="x", anchor="w", pady=(4, 0))
+            failed = "error" in item or (item.get("slice") is not None and not item["slice"].ok)
+            mark = tk.Label(row, text="✗" if failed else "✓", fg=FAIL_COLOUR if failed else OK_COLOUR,
+                            font=ui_font(10, "bold"), **({"bg": self.bg} if self.bg else {}))
+            mark.pack(side="left", anchor="n")
+            text = ttk.Frame(row)
+            text.pack(side="left", padx=(6, 0), fill="x")
+            ttk.Label(text, text=item["name"], font=ui_font(10, "bold")).pack(anchor="w")
+            for line, colour in self.result_lines(item):
+                ttk.Label(text, text=line, foreground=colour, wraplength=430, justify="left").pack(anchor="w")
+        if len(results) > len(shown):
+            ttk.Label(box, text=f"…and {len(results) - len(shown)} more; see the log.",
+                      foreground=MUTED).pack(anchor="w", pady=(6, 0))
+        buttons = ttk.Frame(box)
+        buttons.pack(fill="x", pady=(14, 0))
+        ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right")
+        if self.last_output is not None and any("error" not in r for r in results):
+            ttk.Button(buttons, text="Show in folder", command=self.show_in_folder).pack(side="right", padx=6)
+        win.bind("<Escape>", lambda e: win.destroy())
+        win.bind("<Return>", lambda e: win.destroy())
+        win.focus_set()
+
+    @staticmethod
+    def result_lines(item: dict) -> list[tuple[str, str]]:
+        """the short lines under a file's name: what came out, and what to look at"""
+        if "error" in item:
+            return [(f"Not converted: {item['error']}", FAIL_COLOUR)]
+        lines = []
+        result = item.get("slice")
+        if result is not None and not result.ok:
+            lines.append((f"Test slice failed: {result.error}", FAIL_COLOUR))
+        elif result is not None:
+            h, m = divmod(result.seconds // 60, 60)
+            parts = [f"{h} h {m} min" if h else f"{m} min", f"{result.grams:.0f} g"]
+            if result.plates > 1:
+                parts.append(f"{result.plates} plates")
+            total, missing = item.get("cost", (0.0, 0))
+            if total:
+                parts.append(money(total, item.get("currency", "$")) + (" so far" if missing else ""))
+            lines.append(("  ·  ".join(parts), "#1f2328"))
+            if missing:
+                lines.append((f"{missing} filament{'s' if missing > 1 else ''} without a price; "
+                              "set one with the ⚙ beside it", WARN_COLOUR))
+        else:
+            lines.append(("Converted (not test sliced)", MUTED))
+        for warning in item.get("warnings", [])[:3]:
+            lines.append((f"⚠ {warning}", WARN_COLOUR))
+        extra = len(item.get("warnings", [])) - 3
+        if extra > 0:
+            lines.append((f"⚠ and {extra} more in the log", WARN_COLOUR))
+        return lines
 
 
 def main(files: list[str] | None = None) -> int:

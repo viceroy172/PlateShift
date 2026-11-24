@@ -62,6 +62,20 @@ def money(amount: float, currency: str) -> str:
     return f"{currency}{gap}{amount:,.2f}"
 
 
+def filament_total(grams_each: list[float], prices: dict[int, float]) -> tuple[float, int]:
+    """(cost of the priced filaments, how many used filaments have no price)"""
+    total, missing = 0.0, 0
+    for index, grams in enumerate(grams_each, start=1):
+        if grams <= 0:
+            continue
+        price = prices.get(index) or 0.0
+        if price > 0:
+            total += grams / 1000 * price
+        else:
+            missing += 1
+    return total, missing
+
+
 def cost_lines(grams_each: list[float], slots: list, prices: dict[int, float], currency: str,
                slot_word: str = "Toolhead", hint: str = "set one with the ⚙ beside its filament") -> list[str]:
     """the filament cost, one line per used slot and a total. slots: the report's
