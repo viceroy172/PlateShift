@@ -259,6 +259,7 @@ class App:
             root.createcommand("tkAboutDialog", self.about)  # the app menu's "About PlateShift"
 
         self.open_choice.trace_add("write", lambda *_: self.remember(slicer=True))
+        self.open_choice.trace_add("write", lambda *_: hasattr(self, "checker") and self.update_tester())
         self.process_choice.trace_add("write", lambda *_: self.remember(process=True))
         self.keep_design.trace_add("write", lambda *_: self.remember())
         for var in (self.printer, self.check):
@@ -1162,10 +1163,18 @@ class App:
         ttk.Button(box, text="Close", command=win.destroy).grid(row=1, column=1, sticky="e", pady=(10, 0))
         win.bind("<Escape>", lambda e: win.destroy())
 
+    def slicer_for_testing(self, target):
+        """the slicer you'll open the file in, when it can slice from the command line
+        and has the printer; else the first of the printer's slicers that can"""
+        chosen = self.chosen_slicer() if hasattr(self, "open_choice") else None
+        if chosen is not None and chosen.label in CAN_TEST and chosen.label in target.slicers:
+            return chosen
+        return test_slicer(self.slicers, target)
+
     def update_tester(self):
         # the test slice needs a slicer with this printer's profiles
         target = self.target()
-        self.tester = test_slicer(self.slicers, target)
+        self.tester = self.slicer_for_testing(target)
         if self.tester:
             self.checker.configure(text=f"Test slice and price with {self.tester.label} afterwards",
                                    state="disabled" if self.busy else "normal")
