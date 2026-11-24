@@ -306,9 +306,12 @@ def send(conn: Connection, gcode: Path, start: bool, tool_colours: list[str] | N
                             "screen (Settings → Network, LAN mode).")
         notes, mappings = [], []
         tools = tool_colours or []
+        used = gcode_used(gcode)
         if len(tools) > 1 or start:
             slots = {s.slot: s for s in flashforge_slots(flashforge_detail(conn))}
             for tool, colour in enumerate(tools):
+                if used and tool < len(used) and not used[tool]:
+                    continue   # a filament the print never uses needs no slot
                 slot = slots.get(tool + 1)
                 if slot is None:
                     continue
@@ -327,6 +330,28 @@ def send(conn: Connection, gcode: Path, start: bool, tool_colours: list[str] | N
             creality_start(conn, name, str(info.get("model", "")))
         return Sent(_host(conn.host), name, start)
     raise SendError("PlateShift can't send to this printer yet.")
+
+
+def gcode_used(gcode: Path) -> list[bool]:
+    """which of the g-code's filaments it actually prints with (from '; filament used [g]')"""
+    try:
+        with open(gcode, "rb") as fh:
+            head = fh.read(200_000)              # flash studio puts its summary first
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - 400_000))
+            text = (head + b"\n" + fh.read()).decode("utf-8", "replace")   # orca at the end
+    except OSError:
+        return []
+    m = re.search(r"^; filament used \[g\] = (.+)$", text, re.MULTILINE)
+    if not m:
+        return []
+    used = []
+    for part in m.group(1).split(","):
+        try:
+            used.append(float(part) > 0)
+        except ValueError:
+            used.append(True)
+    return used
 
 
 def gcode_filaments(gcode: Path) -> tuple[list[str], list[str]]:

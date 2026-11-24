@@ -162,6 +162,15 @@ class SendTests(unittest.TestCase):
         self.assertIsNone(sendprint.flash_studio_match("Flashforge Adventurer 5M", printers))
         self.assertEqual(sendprint.flash_studio_printers([self.tmp / "none"]), [])
 
+    def test_used_filaments_at_either_end(self):
+        flash = self.tmp / "flash.gcode"      # flash studio: the summary comes first
+        flash.write_text("; filament used [g] = 4.00, 0.00, 1.50\n" + "G1 X1\n" * 50000)
+        self.assertEqual(sendprint.gcode_used(flash), [True, False, True])
+        orca = self.tmp / "orca.gcode"        # orca: at the end
+        orca.write_text("G1 X1\n" * 50000 + "; filament used [g] = 0.00, 2.00\n")
+        self.assertEqual(sendprint.gcode_used(orca), [False, True])
+        self.assertEqual(sendprint.gcode_used(self.tmp / "missing.gcode"), [])
+
     def test_names_and_brands(self):
         self.assertEqual(sendprint.safe_name("a<b>:c?.gcode"), "a_b__c_.gcode")
         self.assertEqual(sendprint.kind_for("Flashforge"), "flashforge")
