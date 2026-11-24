@@ -18,8 +18,8 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 from . import REPO_URL, __version__, dnd, typeahead
 from .icon_data import ICONS
 from .preview import plate_pictures
-from .convert import (ConversionError, _family, analyse, convert, default_output, lead_colour, process_choices,
-                      suggest, unique_output)
+from .convert import (ConversionError, _family, analyse, convert, default_output, lead_colour, plate_names,
+                      plate_output, process_choices, suggest, unique_output)
 from .printers import TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
 from .slicers import CAN_TEST, Slicer, find_slicers, open_in, test_slicer
@@ -396,10 +396,11 @@ class App:
         self.set_status(f"Reading {source.name}…")
 
         def work():
-            result = (None, None, None, [])
+            result = (None, None, None, [], [])
             try:
                 located, lib = self.library(target)
-                result = (source, located, analyse(source, located, lib), plate_pictures(source))
+                result = (source, located, analyse(source, located, lib), plate_pictures(source),
+                          plate_names(source))
             except Exception as exc:  # anything at all: the window must never stay busy
                 self.write(f"✗ {source.name}: not converted", "fail")
                 self.write(f"  {_explain(exc)}\n")
@@ -408,7 +409,7 @@ class App:
 
         threading.Thread(target=work, daemon=True).start()
 
-    def after_prepare(self, source, target, plan, pictures=()):
+    def after_prepare(self, source, target, plan, pictures=(), names=()):
         self.progress.stop()
         self.progress.configure(mode="determinate", value=0)
         self.set_busy(False)
@@ -416,9 +417,9 @@ class App:
             self.status.configure(text="✗ Nothing was converted (see below)", fg=FAIL_COLOUR,
                                   font=ui_font(10, "bold"))
             return
-        self.show_plan(source, target, plan, pictures)
+        self.show_plan(source, target, plan, pictures, names)
 
-    def show_plan(self, source: Path, target, plan, pictures=()):
+    def show_plan(self, source: Path, target, plan, pictures=(), names=()):
         self.plan = plan
         self.plan_source = source
         self.plan_target = target
@@ -430,7 +431,13 @@ class App:
         heads = [str(i) for i in range(1, target.toolheads + 1)]
         box = ttk.LabelFrame(self.plan_frame, text=f" {source.name} ", padding=10)
         box.pack(fill="x")
-        self.show_thumbnail(box, source, pictures)
+        self.plate_labels = list(names) or ["Plate 1"]
+        self.plate_vars = [tk.BooleanVar(value=True) for _ in self.plate_labels]
+        self.split_plates = tk.BooleanVar(value=False)
+        side = ttk.Frame(box)
+        side.pack(side="left", anchor="n", padx=(0, 12))
+        self.show_thumbnail(side, source, pictures)
+        self.show_plate_choice(side)
 
         left = ttk.Frame(box)
         left.pack(side="left", fill="y", anchor="n")
@@ -498,7 +505,7 @@ class App:
         small = first.subsample(max(1, math.ceil(max(first.width(), first.height()) / 110)))
         self.plate_images = images + [small]
         frame = ttk.Frame(box)
-        frame.pack(side="left", anchor="n", padx=(0, 12))
+        frame.pack(anchor="n")
         pic = tk.Label(frame, image=small, cursor="hand2", bd=1, relief="solid", bg="#ffffff")
         pic.pack()
         pic.bind("<Button-1>", lambda e: self.show_plates(source, images))
@@ -516,20 +523,56 @@ class App:
         bar.pack(fill="x")
         caption = ttk.Label(bar, foreground=MUTED)
 
+        labels = getattr(self, "plate_labels", [])
+        ticks = getattr(self, "plate_vars", [])
+        # one tick per picture only when each plate has its picture
+        tick = ttk.Checkbutton(bar, text="Convert this plate") if len(ticks) == len(images) > 1 else None
+
         def go(step: int):
             shown[0] = (shown[0] + step) % len(images)
             pic.configure(image=images[shown[0]])
-            caption.configure(text=f"Plate {shown[0] + 1} of {len(images)}")
+            name = labels[shown[0]].partition(": ")[2] if shown[0] < len(labels) else ""
+            caption.configure(text=f"Plate {shown[0] + 1} of {len(images)}" + (f": {name}" if name else ""))
+            if tick is not None:
+                tick.configure(variable=ticks[shown[0]])
         if len(images) > 1:
             ttk.Button(bar, text="<", width=3, command=lambda: go(-1)).pack(side="left")
             caption.pack(side="left", padx=10)
             ttk.Button(bar, text=">", width=3, command=lambda: go(1)).pack(side="left")
+            if tick is not None:
+                tick.pack(side="left", padx=(14, 0))
             go(0)
             win.bind("<Left>", lambda e: go(-1))
             win.bind("<Right>", lambda e: go(1))
         ttk.Button(bar, text="Close", command=win.destroy).pack(side="right")
         win.bind("<Escape>", lambda e: win.destroy())
         self.plates_window = win
+
+    def show_plate_choice(self, side):
+        """a tick per plate, and whether each plate gets its own file"""
+        if len(self.plate_vars) < 2:
+            return
+        frame = ttk.Frame(side)
+        frame.pack(anchor="w", pady=(8, 0))
+        ttk.Label(frame, text="Plates", font=ui_font(9, "bold")).grid(row=0, column=0, columnspan=4, sticky="w")
+        for i, var in enumerate(self.plate_vars):
+            row, col = divmod(i, 4)
+            ttk.Checkbutton(frame, text=str(i + 1), variable=var, width=3).grid(row=row + 1, column=col, sticky="w")
+            var.trace_add("write", lambda *_: self.plates_changed())
+        rows = (len(self.plate_vars) + 3) // 4
+        ttk.Checkbutton(frame, text="One file per plate", variable=self.split_plates).grid(
+            row=rows + 1, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        self.plates_note = ttk.Label(frame, foreground=MUTED, font=ui_font(8))
+        self.plates_note.grid(row=rows + 2, column=0, columnspan=4, sticky="w")
+        self.plates_changed()
+
+    def chosen_plates(self) -> list[int]:
+        return [i + 1 for i, v in enumerate(getattr(self, "plate_vars", [])) if v.get()]
+
+    def plates_changed(self):
+        chosen, total = len(self.chosen_plates()), len(self.plate_vars)
+        text = "all plates" if chosen == total else f"{chosen} of {total} plates" if chosen else "no plates ticked"
+        self.plates_note.configure(text=text, foreground=WARN_COLOUR if not chosen else MUTED)
 
     def current_merge(self) -> list[int]:
         return [int(v.get()) for v in self.merge_vars]
@@ -786,12 +829,20 @@ class App:
                 usual[str(t)] = chosen  # offered first next time
         save_settings(self.settings)
         colours = {t: c for t, c in self.head_colours.items() if t in set(merge)}
-        output = self.choose_output(default_output(source, target))
-        if output is None:
-            return  # cancelled; the panel stays open
+        plates = self.chosen_plates()
+        if not plates:
+            messagebox.showinfo("No plates ticked", "Tick at least one plate to convert.", parent=self.root)
+            return
+        split = self.split_plates.get() and len(self.plate_vars) > 1
+        output = None
+        if not split:  # a file per plate never replaces anything; it keeps both
+            output = self.choose_output(default_output(source, target))
+            if output is None:
+                return  # cancelled; the panel stays open
         self.close_plan()
         self.run([source], plan=plan, merge=merge, overrides=overrides, colours=colours,
-                 target=target, outputs={source: output})
+                 target=target, outputs={source: output} if output else None,
+                 plates=None if len(plates) == len(self.plate_vars) and not split else plates, split=split)
 
     def choose_output(self, output: Path) -> Path | None:
         """ask before replacing a file that's already there"""
@@ -809,7 +860,8 @@ class App:
     # --- converting -------------------------------------------------------
 
     def run(self, files: list[Path], plan=None, merge=None, overrides=None, colours=None, target=None,
-            outputs: dict[Path, Path] | None = None):
+            outputs: dict[Path, Path] | None = None, plates: list[int] | None = None, split: bool = False):
+        # plates: the ones to keep (all when None); split: a file for each of them
         # a plan is only valid for the printer it was made for
         target = target or self.target()
         testing = self.check.get() and self.tester is not None
@@ -818,47 +870,58 @@ class App:
         self.set_busy(True)
         self.show.pack_forget()
         self.open_button.pack_forget()
-        self.progress.configure(maximum=len(files) * (2 if testing else 1), value=0)
+        count = len(plates) if split and plates else len(files)
+        self.progress.configure(maximum=count * (2 if testing else 1), value=0)
         self.set_status(f"Converting {len(files)} file(s)…")
 
         def work():
             nonlocal target
             converted, failed, slice_failed = [], [], []
             step = 0
+            started = 0  # files begun, so a crash outside one knows which are left
             try:
                 target, lib = self.library(target)
                 for number, source in enumerate(files, start=1):
+                    started = number
                     self.set_status(f"Converting {number} of {len(files)}: {source.name}…")
                     # batches never replace an earlier conversion; they keep both
-                    output = (outputs or {}).get(source) or unique_output(default_output(source, target))
-                    try:
-                        report = convert(source, output, target, lib, overrides or {},
-                                         merge=merge, plan=plan if len(files) == 1 else None,
-                                         colours=colours, process=process, keep_design=keep_design)
-                    except Exception as exc:  # one bad file mustn't stop the rest
-                        failed.append(source)
-                        self.write(f"✗ {source.name}: not converted", "fail")
-                        self.write(f"  {_explain(exc)}\n")
-                        step += 2 if testing else 1
-                        self.later(lambda n=step: self.progress.configure(value=n))
-                        continue
-                    converted.append(report.output)
-                    lines = report.lines()
-                    self.write(f"✓ {lines[0]}", "ok")
-                    self.write("\n".join(lines[1:]))
-                    step += 1
-                    self.later(lambda n=step: self.progress.configure(value=n))
-                    if testing:
-                        self.set_status(f"Test slicing {output.name} in {self.tester.label}…")
-                        result = test_slice(self.tester, output)
-                        self.write(f"  {'✓' if result.ok else '✗'} {result.line()}", "ok" if result.ok else "fail")
-                        if not result.ok:
-                            slice_failed.append(output)
+                    if split and plates:
+                        jobs = [([n], unique_output(plate_output(default_output(source, target), n)))
+                                for n in plates]
+                    else:
+                        jobs = [(plates, (outputs or {}).get(source)
+                                 or unique_output(default_output(source, target)))]
+                    for chosen, output in jobs:
+                        try:
+                            report = convert(source, output, target, lib, overrides or {},
+                                             merge=merge, plan=plan if len(files) == 1 else None,
+                                             colours=colours, process=process, keep_design=keep_design,
+                                             plates=chosen)
+                        except Exception as exc:  # one bad file mustn't stop the rest
+                            failed.append(source)
+                            self.write(f"✗ {source.name}: not converted", "fail")
+                            self.write(f"  {_explain(exc)}\n")
+                            step += (2 if testing else 1) * len(jobs)
+                            self.later(lambda n=step: self.progress.configure(value=n))
+                            break  # the same problem would stop every plate
+                        converted.append(report.output)
+                        lines = report.lines()
+                        self.write(f"✓ {lines[0]}", "ok")
+                        self.write("\n".join(lines[1:]))
                         step += 1
                         self.later(lambda n=step: self.progress.configure(value=n))
-                    self.write("")
+                        if testing:
+                            self.set_status(f"Test slicing {output.name} in {self.tester.label}…")
+                            result = test_slice(self.tester, output)
+                            self.write(f"  {'✓' if result.ok else '✗'} {result.line()}",
+                                       "ok" if result.ok else "fail")
+                            if not result.ok:
+                                slice_failed.append(output)
+                            step += 1
+                            self.later(lambda n=step: self.progress.configure(value=n))
+                        self.write("")
             except Exception as exc:  # no profiles, or something unexpected outside a file
-                failed.extend(files[len(converted) + len(failed):])
+                failed.extend(f for f in files[max(started - 1, 0):] if f not in failed)
                 self.write(f"✗ {_explain(exc)}\n", "fail")
             finally:
                 self.later(lambda: self.finish(converted, failed, slice_failed))

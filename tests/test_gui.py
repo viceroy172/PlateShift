@@ -164,6 +164,77 @@ class WindowTests(unittest.TestCase):
         self.app.show_plates(src, self.app.plate_images[:2])
         self.assertTrue(self.app.plates_window.winfo_exists())
 
+    def three_plates(self) -> Path:
+        step = 256 * 1.2
+        return write_project(self.tmp / "three.3mf", bambu_settings(),
+                             [[(128, 128)], [(128 + step, 128)], [(128, 128 - step)]])
+
+    def test_single_plate_has_no_plate_choice(self):
+        self.app.handle_files([self.six_colours()])
+        self.wait(self.panel_ready)
+        self.assertEqual(len(self.app.plate_vars), 1)
+        self.assertFalse(hasattr(self.app, "plates_note") and self.app.plates_note.winfo_exists())
+
+    def test_chosen_plates_go_in_one_file(self):
+        app = self.app
+        app.printer.set(FOUR.label)
+        app.handle_files([self.three_plates()])
+        self.wait(lambda: self.panel_ready() and app.plan_target.toolheads == 4)
+        self.assertEqual(app.chosen_plates(), [1, 2, 3])
+        self.assertEqual(str(app.plates_note.cget("text")), "all plates")
+        app.plate_vars[1].set(False)
+        self.assertEqual(str(app.plates_note.cget("text")), "2 of 3 plates")
+        app.convert_plan()
+        self.wait(lambda: not app.busy and app.last_output is not None)
+        self.assertEqual(app.last_output.name, "three - Four.3mf")
+        self.assertIn("Kept plates 1, 3 of 3 (now plates 1-2)", self.log())
+
+    def test_one_file_per_plate(self):
+        app = self.app
+        app.printer.set(FOUR.label)
+        app.handle_files([self.three_plates()])
+        self.wait(lambda: self.panel_ready() and app.plan_target.toolheads == 4)
+        app.plate_vars[0].set(False)
+        app.split_plates.set(True)
+        app.convert_plan()
+        self.wait(lambda: not app.busy and app.last_output is not None)
+        made = sorted(p.name for p in self.tmp.glob("three - Four - plate *.3mf"))
+        self.assertEqual(made, ["three - Four - plate 2.3mf", "three - Four - plate 3.3mf"])
+
+    def test_no_plates_ticked_converts_nothing(self):
+        app = self.app
+        app.handle_files([self.three_plates()])
+        self.wait(self.panel_ready)
+        for var in app.plate_vars:
+            var.set(False)
+        self.assertEqual(str(app.plates_note.cget("text")), "no plates ticked")
+        shown = []
+        real = self.gui.messagebox.showinfo
+        self.gui.messagebox.showinfo = lambda *a, **k: shown.append(a)
+        try:
+            app.convert_plan()
+        finally:
+            self.gui.messagebox.showinfo = real
+        self.assertEqual(len(shown), 1)
+        self.assertIsNotNone(app.plan)  # the panel stays open
+
+    def test_plate_viewer_ticks_plates(self):
+        from test_preview import PNG
+        src = self.three_plates()
+        with zipfile.ZipFile(src, "a") as z:
+            for i in (1, 2, 3):
+                z.writestr(f"Metadata/plate_{i}.png", PNG)
+        app = self.app
+        app.handle_files([src])
+        self.wait(self.panel_ready)
+        app.show_plates(src, app.plate_images[:3])
+        win = app.plates_window
+        bar = win.winfo_children()[1].winfo_children()
+        tick = next(w for w in bar if w.winfo_class() == "TCheckbutton")
+        next(w for w in bar if str(w.cget("text")) == ">").invoke()
+        tick.invoke()  # untick plate 2
+        self.assertEqual(app.chosen_plates(), [1, 3])
+
     def test_filaments_are_remembered_per_toolhead(self):
         app = self.app
         app.printer.set(FOUR.label)
@@ -209,8 +280,8 @@ class WindowTests(unittest.TestCase):
         app.printer.set(FOUR.label)
         self.wait(lambda: self.panel_ready() and app.plan_target.toolheads == 4)
         self.assertEqual(sorted(set(app.current_merge())), [1, 2, 3, 4])
-        combos = [w for w in app.plan_frame.winfo_children()[0].winfo_children()[0].winfo_children()
-                  if w.winfo_class() == "TCombobox"]
+        combos = [w for frame in app.plan_frame.winfo_children()[0].winfo_children()
+                  for w in frame.winfo_children() if w.winfo_class() == "TCombobox" and int(w.cget("width")) == 4]
         self.assertTrue(combos and all(str(c.cget("state")) == "readonly" for c in combos))
 
         app.convert_plan()

@@ -136,6 +136,15 @@ changes the colour the slicer shows, not what gets printed. Projects with more c
 printer has toolheads start with the closest colours already merged. Several files
 at once are matched automatically.
 
+Projects with more than one plate get a tick per plate: untick the ones you don't
+want and the rest are renumbered from 1. Tick **One file per plate** to save each
+plate as its own project (`Model - C5P - plate 2.3mf`). The enlarged plate pictures
+have a *Convert this plate* tick too, so you can choose while you look.
+
+Every dropdown takes type-ahead: type the first letters of an entry (or of any word in
+it, so "silk" finds *Generic PLA Silk*) to jump there, type the same letter again to
+step through its matches.
+
 **Print profile** is Automatic by default: the slicer's own print preset with the
 closest layer height, with the designer's choices put over it. Or pick one of your
 own print profiles from Flash Studio, OrcaSlicer or Creality Print (marked *yours*) or
@@ -163,6 +172,8 @@ python -m plateshift inspect "Model.3mf"                      # colours, usage, 
 python -m plateshift convert "Model.3mf"                      # -> "Model - C5P.3mf"
 python -m plateshift convert "Model.3mf" -m "5=2,6=3"         # colour 5 -> toolhead 2, 6 -> 3
 python -m plateshift convert "Model.3mf" -c 3=#2E7D32         # show toolhead 3 in your green
+python -m plateshift convert "Model.3mf" --plates 1,3-4         # only these plates, renumbered 1-3
+python -m plateshift convert "Model.3mf" --split                # a file per plate
 python -m plateshift convert "Model.3mf" -f 1="FilX SBS @FF C5P" --test-slice
 python -m plateshift convert *.3mf --printer k1max -o converted\
 python -m plateshift filaments --printer c5p                  # preset names, yours marked
@@ -183,7 +194,7 @@ converted settings behind.
 | Print settings | Taken from the print profile you pick, or by default the target process preset with the closest layer height. Then, unless your own pick wins, the project's design choices (layer height, walls, infill, supports, raft, brim, ironing, seam, fuzzy skin, which filament prints what, and line widths when the nozzle size matches) are carried over. Everything else comes from the target preset or the slicer's defaults. |
 | Filaments | Each toolhead gets the closest target preset of the same material, matched on type and name (Basic, Silk, Matte, CF…), or the one you pick, and keeps the project's colour |
 | Painted colours | Rewritten triangle by triangle when colours are merged or moved to another toolhead, along with each object's filament, layer colour changes and support filament |
-| Models, per-object settings, plates | Copied unchanged |
+| Models, per-object settings, plates | Copied unchanged, unless you leave plates out: then their objects, pictures and per-plate settings go and the rest are renumbered |
 | Object positions | If the bed is a different size, objects and prime towers are moved so they stay where they were on their plate. A prime tower that would then run into an object is moved to the nearest clear spot. Anything that hangs off a plate, is too tall or leaves no room for the tower gets a warning |
 | Sliced G-code | Removed, because it was made for the original printer |
 | Bambu Studio 2.x extras | Per-nozzle-type lists are cut to the standard nozzle, `#D6B685FF` colours become `#D6B685`, Bambu-only options are dropped |

@@ -110,6 +110,42 @@ class ConvertCommandTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("4 colours", out)
         self.assertIn("toolhead 3: Generic PETG @T", out)
+        self.assertNotIn("plates:", out)
+
+    def three_plates(self) -> Path:
+        step = 256 * 1.2
+        return write_project(self.tmp / "three.3mf", bambu_settings(),
+                             [[(128, 128)], [(128 + step, 128)], [(128, 128 - step)]])
+
+    def test_inspect_lists_plates(self):
+        code, out, _ = self.run_cli("inspect", str(self.three_plates()))
+        self.assertEqual(code, 0)
+        self.assertIn("3 plates: Plate 1, Plate 2, Plate 3", out)
+
+    def test_chosen_plates_in_one_file(self):
+        code, out, _ = self.run_cli("convert", str(self.three_plates()), "--plates", "1,3",
+                                    "-o", str(self.tmp / "out.3mf"))
+        self.assertEqual(code, 0)
+        self.assertIn("Kept plates 1, 3 of 3 (now plates 1-2)", out)
+        self.assertTrue((self.tmp / "out.3mf").exists())
+
+    def test_split_gives_a_file_per_plate(self):
+        src = self.three_plates()
+        code, out, _ = self.run_cli("convert", str(src), "--split", "-o", str(self.tmp))
+        self.assertEqual(code, 0)
+        names = sorted(p.name for p in self.tmp.glob("three - *.3mf"))
+        self.assertEqual(names, [f"three - T - plate {n}.3mf" for n in (1, 2, 3)])
+        code, out, _ = self.run_cli("convert", str(src), "--split", "--plates", "2", "-o", str(self.tmp))
+        self.assertEqual(code, 0)
+        self.assertTrue((self.tmp / "three - T - plate 2 (2).3mf").exists())  # never replaced
+
+    def test_plate_mistakes_are_explained(self):
+        src = self.three_plates()
+        code, _, err = self.run_cli("convert", str(src), "--plates", "4", "-o", str(self.tmp / "o.3mf"))
+        self.assertEqual(code, 1)
+        self.assertIn("3 plates; there is no plate 4", err)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            cli.main(["convert", str(src), "--plates", "two"])
 
 
 if __name__ == "__main__":

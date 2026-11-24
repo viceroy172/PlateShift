@@ -26,6 +26,7 @@ MODEL_SETTINGS_RELS = "Metadata/_rels/model_settings.config.rels"
 SLICE_INFO = "Metadata/slice_info.config"
 CUSTOM_GCODE = "Metadata/custom_gcode_per_print_z.xml"
 FILAMENT_SEQUENCE = "Metadata/filament_sequence.json"
+CUT_INFO = "Metadata/cut_information.xml"
 GCODE_ENTRY = re.compile(r"^Metadata/plate_\d+\.gcode(\.md5)?$", re.IGNORECASE)
 
 # real projects are tens of mb; these only stop zip bombs
@@ -165,6 +166,8 @@ class Report:
     moved_objects: int = 0
     repainted: int = 0
     removed_gcode: bool = False
+    plates: list[int] = field(default_factory=list)   # plates kept, when not all of them
+    plate_count: int = 0
     warnings: list[str] = field(default_factory=list)
     extra: list[str] = field(default_factory=list)
 
@@ -183,6 +186,12 @@ class Report:
             out.append(f"  Repainted {self.repainted} triangles for the merged colours")
         if self.moved_objects:
             out.append(f"  Moved {self.moved_objects} object(s) to fit the new bed size")
+        if self.plates:
+            which = ", ".join(map(str, self.plates))
+            word = "plate" if len(self.plates) == 1 else "plates"
+            now = "" if self.plates == list(range(1, len(self.plates) + 1)) else \
+                (" (now plate 1)" if len(self.plates) == 1 else f" (now plates 1-{len(self.plates)})")
+            out.append(f"  Kept {word} {which} of {self.plate_count}{now}")
         if self.removed_gcode:
             out.append("  Removed G-code sliced for the original printer")
         out.extend(f"  Warning: {w}" for w in self.warnings)
@@ -983,6 +992,98 @@ def _fit_prime_towers(settings: dict, box, plate_count: int, filaments: int) -> 
                                       y1 - depth - brim - margin) for i in range(count)]
 
 
+# --- choosing plates -------------------------------------------------------
+
+MODEL_RELS = "3D/_rels/3dmodel.model.rels"
+# pictures, json and g-code saved per plate, eg Metadata/plate_no_light_2.png
+_PLATE_FILE = re.compile(r"(Metadata/(?:plate|plate_no_light|top|pick)_)(\d+)(?=[._])")
+_PLATE_ENTRY = re.compile(r"Metadata/(?:plate|plate_no_light|top|pick)_\d+(?:_small)?\.(?:png|json|gcode|gcode\.md5)$",
+                          re.IGNORECASE)
+_PLATE_BLOCK = re.compile(r"[ \t]*<plate>.*?</plate>[ \t]*\r?\n?", re.DOTALL)
+_ITEM_LINE = re.compile(r"([ \t]*)(<item\b[^>]*>)([ \t]*\r?\n)?")
+
+
+def _plate_names(model_settings: str | None) -> list[str]:
+    if not model_settings:
+        return ["Plate 1"]
+    plates = ET.fromstring(model_settings).findall("plate")
+    names = []
+    for index, plate in enumerate(plates, start=1):
+        meta = {m.get("key"): m.get("value") or "" for m in plate.findall("metadata")}
+        name = meta.get("plater_name", "").strip()
+        names.append(f"Plate {index}: {name}" if name else f"Plate {index}")
+    return names or ["Plate 1"]
+
+
+def plate_names(source: Path) -> list[str]:
+    """"Plate 1", "Plate 2: Base"... one for each plate in the project"""
+    source = Path(source)
+    with _plain_errors(source.name), _open(source) as zin:
+        settings = zin.read(MODEL_SETTINGS).decode("utf-8") if MODEL_SETTINGS in zin.namelist() else None
+        return _plate_names(settings)
+
+
+def parse_plates(text: str) -> list[int]:
+    """"1,3-4" -> [1, 3, 4]"""
+    plates: set[int] = set()
+    for part in text.replace(" ", "").split(","):
+        if not part:
+            continue
+        first, _, last = part.partition("-")
+        if not first.isdigit() or (last and not last.isdigit()) or int(first) < 1 \
+                or int(last or first) < int(first):
+            raise ValueError(f"{part!r} isn't a plate number or a range like 2-4")
+        plates.update(range(int(first), int(last or first) + 1))
+    if not plates:
+        raise ValueError("no plates given")
+    return sorted(plates)
+
+
+def plate_output(output: Path, number: int) -> Path:
+    """the output for one plate when each plate gets its own file"""
+    output = Path(output)
+    return output.with_name(f"{output.stem} - plate {number}{output.suffix}")
+
+
+def _kept_plates(plates: list[int] | None, count: int) -> list[int] | None:
+    """0-based plates to keep, or None for all of them"""
+    if not plates:
+        return None
+    wanted = sorted(set(plates))
+    bad = [p for p in wanted if p < 1 or p > count]
+    if bad:
+        raise ConversionError(f"This project has {count} plate{'s' if count != 1 else ''}; "
+                              f"there is no plate {bad[0]}.")
+    return None if len(wanted) == count else [p - 1 for p in wanted]
+
+
+def _pick_plates(settings: dict, keep: list[int]) -> None:
+    # per-plate settings (prime tower spots) follow their plates
+    for key in PER_PLATE:
+        values = settings.get(key)
+        if isinstance(values, list) and values:
+            settings[key] = [values[min(i, len(values) - 1)] for i in keep]
+
+
+def _renumber_blocks(xml: str, number_re: str, renumber: dict[int, int], extra=None) -> str:
+    """drop the <plate> blocks of plates that go and renumber the rest. number_re
+    finds a block's 1-based plate number (else its position counts)"""
+    position = [-1]
+
+    def block(match: re.Match) -> str:
+        text = match.group(0)
+        position[0] += 1
+        found = re.search(number_re, text)
+        old = int(found.group(2)) - 1 if found else position[0]
+        if old not in renumber:
+            return ""
+        new = renumber[old] + 1
+        if found:
+            text = text[:found.start(2)] + str(new) + text[found.end(2):]
+        return extra(text, new) if extra else text
+    return _PLATE_BLOCK.sub(block, xml)
+
+
 def _drop_gcode_rels(rels_xml: str) -> str | None:
     """the relationships file without links to sliced g-code; None if nothing else is left"""
     kept = [r for r in re.findall(r"<Relationship\b[^>]*/>", rels_xml)
@@ -1006,6 +1107,7 @@ class _Conversion:
         self.zin, self.source, self.output, self.target, self.lib = zin, source, output, target, lib
         self.entries = {i.filename: i for i in zin.infolist()}
         self.replacements: dict[str, bytes | None] = {}
+        self.renames: dict[str, str] = {}   # entry -> the name it's written under
         self.models = {name: zin.read(name).decode("utf-8") for name in _model_entries(zin)}
         self.touched: set[str] = set()
         self.model_settings = (zin.read(MODEL_SETTINGS).decode("utf-8")
@@ -1015,6 +1117,11 @@ class _Conversion:
 
     def text(self, name: str) -> str:
         return self.zin.read(name).decode("utf-8")
+
+    def current(self, name: str) -> str:
+        """an entry's text as changed so far"""
+        data = self.replacements.get(name)
+        return data.decode("utf-8") if data is not None else self.text(name)
 
     def recolour(self, plan: Plan) -> None:
         """repaint triangles and renumber filaments for the toolhead layout"""
@@ -1035,11 +1142,11 @@ class _Conversion:
                 ms)
             self.model_settings_changed = True
         if CUSTOM_GCODE in self.entries:
-            xml = _remap_numbers(r'(\bextruder=")(\d+)(")', self.text(CUSTOM_GCODE), mapping)
+            xml = _remap_numbers(r'(\bextruder=")(\d+)(")', self.current(CUSTOM_GCODE), mapping)
             self.replacements[CUSTOM_GCODE] = xml.encode("utf-8")
         if len(set(plan.merge)) < len(plan.filaments) and FILAMENT_SEQUENCE in self.entries:
             try:
-                seq = json.loads(self.zin.read(FILAMENT_SEQUENCE))
+                seq = json.loads(self.current(FILAMENT_SEQUENCE))
                 for plate in seq.values():
                     if isinstance(plate, dict):
                         for k in plate:
@@ -1047,6 +1154,132 @@ class _Conversion:
                 self.replacements[FILAMENT_SEQUENCE] = json.dumps(seq).encode("utf-8")
             except (ValueError, AttributeError):
                 self.replacements[FILAMENT_SEQUENCE] = None
+
+    def choose_plates(self, keep: list[int], plate_of: dict, plate_count: int, box):
+        """keep only the plates in `keep` (0-based, in order), renumbered from 1 and
+        moved to where the slicer lays out that many plates. returns the new
+        (plate_of, plate_count)"""
+        renumber = {old: new for new, old in enumerate(keep)}
+        old_columns, new_columns = _plate_columns(plate_count), _plate_columns(len(keep))
+        seen: dict[str, int] = {}
+        kept: dict[str, int] = {}
+        instances: dict[tuple[str, str], str] = {}   # (object, old instance) -> new instance
+        new_plate_of: dict[tuple[str, str], int] = {}
+
+        def item(match: re.Match) -> str:
+            tag = match.group(2)
+            attrs = dict(_ATTR.findall(tag))
+            obj = attrs.get("objectid", "")
+            old = seen.get(obj, 0)
+            seen[obj] = old + 1
+            plate = plate_of.get((obj, str(old)), 0)
+            if plate not in renumber:
+                return ""
+            new = kept.get(obj, 0)
+            kept[obj] = new + 1
+            instances[(obj, str(old))] = str(new)
+            new_plate_of[(obj, str(new))] = renumber[plate]
+            ox, oy = _plate_centre(plate, old_columns, box)
+            nx, ny = _plate_centre(renumber[plate], new_columns, box)
+            transform = attrs.get("transform", "")
+            numbers = transform.split()
+            if len(numbers) == 12 and (abs(nx - ox) > 1e-9 or abs(ny - oy) > 1e-9):
+                numbers[9] = repr(float(numbers[9]) + nx - ox)
+                numbers[10] = repr(float(numbers[10]) + ny - oy)
+                tag = tag.replace(f'transform="{transform}"', f'transform="{" ".join(numbers)}"')
+            return match.group(1) + tag + (match.group(3) or "")
+
+        gone: list[str] = []
+        if MAIN_MODEL in self.models:
+            model = self.models[MAIN_MODEL]
+            used_before = set(re.findall(r'p:path="/?([^"]+)"', model))
+            model = _ITEM_LINE.sub(item, model)
+            # objects still used as parts of others in this file (components with
+            # a p:path point into another file, so they don't count)
+            parts = {dict(_ATTR.findall(c)).get("objectid") for c in re.findall(r"<component\b[^>]*>", model)
+                     if "p:path=" not in c}
+            for obj in seen:
+                if obj in kept or obj in parts:
+                    continue
+                model, n = re.subn(rf'[ \t]*<object\b[^>]*\bid="{re.escape(obj)}"[^>]*>.*?</object>[ \t]*\r?\n?',
+                                   "", model, count=1, flags=re.DOTALL)
+                if n:
+                    gone.append(obj)
+            self.models[MAIN_MODEL] = model
+            self.touched.add(MAIN_MODEL)
+            # object files only the dropped objects used
+            unused = used_before - set(re.findall(r'p:path="/?([^"]+)"', model))
+            for name in unused:
+                self.models.pop(name, None)
+                if name in self.entries:
+                    self.replacements[name] = None
+            if unused and MODEL_RELS in self.entries:
+                rels = re.sub(r'[ \t]*<Relationship\b[^>]*Target="/?([^"]+)"[^>]*/>[ \t]*\r?\n?',
+                              lambda m: "" if m.group(1) in unused else m.group(0), self.current(MODEL_RELS))
+                self.replacements[MODEL_RELS] = rels.encode("utf-8")
+
+        def files(text: str, new: int) -> str:
+            return _PLATE_FILE.sub(lambda m: m.group(1) + str(new), text)
+
+        if self.model_settings is not None:
+            ms = self.model_settings
+            for obj in gone:
+                ms = re.sub(rf'[ \t]*<object id="{re.escape(obj)}">.*?</object>[ \t]*\r?\n?', "", ms,
+                            count=1, flags=re.DOTALL)
+
+            def instance(text: str, new: int) -> str:
+                def one(m: re.Match) -> str:
+                    t = m.group(0)
+                    o = re.search(r'key="object_id" value="([^"]*)"', t)
+                    i = re.search(r'(key="instance_id" value=")([^"]*)(")', t)
+                    if o and i and (o.group(1), i.group(2)) in instances:
+                        t = t[:i.start(2)] + instances[(o.group(1), i.group(2))] + t[i.end(2):]
+                    return t
+                return files(re.sub(r"<model_instance>.*?</model_instance>", one, text, flags=re.DOTALL), new)
+            ms = _renumber_blocks(ms, r'(key="plater_id" value=")(\d+)(")', renumber, instance)
+
+            def assembled(m: re.Match) -> str:
+                a = dict(_ATTR.findall(m.group(0)))
+                key = (a.get("object_id", ""), a.get("instance_id", "0"))
+                if key not in instances:
+                    return ""
+                return m.group(0).replace(f'instance_id="{key[1]}"', f'instance_id="{instances[key]}"')
+            self.model_settings = re.sub(r"[ \t]*<assemble_item\b[^>]*>[ \t]*\r?\n?", assembled, ms)
+            self.model_settings_changed = True
+
+        for name in self.entries:
+            m = _PLATE_FILE.match(name)
+            if not m or not _PLATE_ENTRY.match(name):
+                continue
+            old = int(m.group(2)) - 1
+            if old in renumber:
+                if renumber[old] != old:
+                    self.renames[name] = files(name, renumber[old] + 1)
+            else:
+                self.replacements[name] = None
+        if SLICE_INFO in self.entries:
+            info = _renumber_blocks(self.current(SLICE_INFO), r'(key="index" value=")(\d+)(")', renumber)
+            self.replacements[SLICE_INFO] = info.encode("utf-8")
+        if CUSTOM_GCODE in self.entries:
+            xml = _renumber_blocks(self.current(CUSTOM_GCODE), r'(<plate_info id=")(\d+)(")', renumber)
+            self.replacements[CUSTOM_GCODE] = xml.encode("utf-8")
+        if FILAMENT_SEQUENCE in self.entries:
+            try:
+                seq = json.loads(self.current(FILAMENT_SEQUENCE))
+                seq = {f"plate_{renumber[int(k[6:]) - 1] + 1}": v for k, v in seq.items()
+                       if k.startswith("plate_") and k[6:].isdigit() and int(k[6:]) - 1 in renumber}
+                self.replacements[FILAMENT_SEQUENCE] = json.dumps(seq).encode("utf-8")
+            except (ValueError, AttributeError):
+                self.replacements[FILAMENT_SEQUENCE] = None
+        if CUT_INFO in self.entries and gone:
+            cut = self.current(CUT_INFO)
+            for obj in gone:
+                cut = re.sub(rf'[ \t]*<object id="{re.escape(obj)}">.*?</object>[ \t]*\r?\n?', "", cut,
+                             count=1, flags=re.DOTALL)
+            self.replacements[CUT_INFO] = cut.encode("utf-8")
+        self.report.plates = [p + 1 for p in keep]
+        self.report.plate_count = plate_count
+        return new_plate_of, len(keep)
 
     def relocate(self, settings: dict, old_box, new_box, plate_of, plate_count) -> None:
         if old_box == new_box:
@@ -1071,7 +1304,7 @@ class _Conversion:
             self.touched.add(MAIN_MODEL)
         if SLICE_INFO in self.entries:
             info = re.sub(r'(key="X-BBL-Client-Version" value=")[^"]*(")',
-                          rf"\g<1>{target.file_version}\2", self.text(SLICE_INFO))
+                          rf"\g<1>{target.file_version}\2", self.current(SLICE_INFO))
             if "OrcaSlicer-Version" not in info:
                 info = re.sub(r'(<header_item key="X-BBL-Client-Version"[^>]*/>)',
                               rf'\1\n    <header_item key="OrcaSlicer-Version" value="{target.orca_version}"/>',
@@ -1119,7 +1352,7 @@ class _Conversion:
 
     def write(self, settings: dict) -> None:
         self.replacements[PROJECT_SETTINGS] = json.dumps(settings, indent=4, ensure_ascii=False).encode("utf-8")
-        for name in self.touched:
+        for name in self.touched & set(self.models):
             self.replacements[name] = self.models[name].encode("utf-8")
         if self.model_settings_changed and self.model_settings is not None:
             self.replacements[MODEL_SETTINGS] = self.model_settings.encode("utf-8")
@@ -1130,16 +1363,18 @@ class _Conversion:
         try:
             with zipfile.ZipFile(partial, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zout:
                 for entry in self.zin.infolist():
-                    if entry.filename in written:
+                    name = self.renames.get(entry.filename, entry.filename)
+                    if name in written:
                         continue  # a duplicate entry in the source zip
-                    written.add(entry.filename)
                     if entry.filename in self.replacements:
                         data = self.replacements[entry.filename]
                         if data is not None:
-                            zout.writestr(_fresh_info(entry), data)
+                            written.add(name)
+                            zout.writestr(_fresh_info(entry, name), data)
                         continue
+                    written.add(name)
                     with self.zin.open(entry) as src_fh, \
-                            zout.open(_fresh_info(entry), "w", force_zip64=True) as dst_fh:
+                            zout.open(_fresh_info(entry, name), "w", force_zip64=True) as dst_fh:
                         shutil.copyfileobj(src_fh, dst_fh, 1024 * 1024)
             partial.replace(self.output)
         finally:
@@ -1147,8 +1382,8 @@ class _Conversion:
                 partial.unlink()
 
 
-def _fresh_info(info: zipfile.ZipInfo) -> zipfile.ZipInfo:
-    fresh = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+def _fresh_info(info: zipfile.ZipInfo, name: str | None = None) -> zipfile.ZipInfo:
+    fresh = zipfile.ZipInfo(name or info.filename, date_time=info.date_time)
     fresh.compress_type = zipfile.ZIP_DEFLATED
     fresh.external_attr = info.external_attr
     return fresh
@@ -1164,13 +1399,15 @@ def _check_colours(colours: dict[int, str] | None) -> dict[int, str]:
 def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
             overrides: dict[int, str] | None = None, merge: list[int] | None = None,
             plan: Plan | None = None, colours: dict[int, str] | None = None,
-            process: str | None = None, keep_design: bool = False) -> Report:
+            process: str | None = None, keep_design: bool = False,
+            plates: list[int] | None = None) -> Report:
     """write `output`, the project in `source` set up for `target`.
     merge: toolhead per source colour (default: the plan's). overrides: toolhead
     -> preset name. colours: toolhead -> #RRGGBB to show instead of the designer's.
     process: a print profile to use instead of the closest system one; then
     keep_design says whether the designer's layer height, walls, infill, supports
-    and so on still go over it.
+    and so on still go over it. plates: the plate numbers (from 1) to keep; the
+    rest are left out and the kept ones renumbered. default: all of them.
     Every problem with the file comes back as a ConversionError."""
     source, output = Path(source), Path(output)
     if source.resolve() == output.resolve():
@@ -1189,14 +1426,18 @@ def convert(source: Path, output: Path, target: Target, lib: ProfileLibrary,
                 f"{target.toolheads}. Choose which toolhead each colour goes to.")
 
         job = _Conversion(zin, source, output, target, lib)
+        plate_of, plate_count = _plate_of_instances(job.model_settings)
+        keep = _kept_plates(plates, plate_count)
         settings = _rewrite_settings(src, lib, target, overrides or {}, plan, job.report, colours,
                                      process, keep_design)
         if target.toolheads == 1 and len(plan.filaments) > 1:
             job.report.warnings.append("all colours print in one filament on this printer")
-        job.recolour(plan)
         old_box = _bed_box(src.get("printable_area"))
         new_box = _bed_box(settings.get("printable_area"))
-        plate_of, plate_count = _plate_of_instances(job.model_settings)
+        if keep is not None:
+            plate_of, plate_count = job.choose_plates(keep, plate_of, plate_count, old_box)
+            _pick_plates(settings, keep)
+        job.recolour(plan)
         job.relocate(settings, old_box, new_box, plate_of, plate_count)
         _fit_prime_towers(settings, new_box, plate_count, max(plan.merge))
         job.clear_prime_towers(settings, new_box, plate_of, plate_count, max(plan.merge))

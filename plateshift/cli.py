@@ -6,7 +6,8 @@ import sys
 from pathlib import Path
 
 from . import REPO_URL, __version__
-from .convert import ConversionError, analyse, convert, default_output, process_choices, unique_output
+from .convert import (ConversionError, analyse, convert, default_output, parse_plates, plate_names,
+                      plate_output, process_choices, unique_output)
 from .printers import BY_KEY, TARGETS
 from .profiles import ProfileLibrary, locate, user_preset_dirs
 from .slicers import CAN_TEST, find_slicers, test_slicer
@@ -25,6 +26,13 @@ def _parse_colour(text: str) -> tuple[int, str]:
     if not sep or not slot.strip().isdigit() or not colour.strip():
         raise argparse.ArgumentTypeError("use TOOLHEAD=#RRGGBB, e.g. 3=#2E7D32")
     return int(slot), colour.strip()
+
+
+def _parse_plates(text: str) -> list[int]:
+    try:
+        return parse_plates(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{exc}; use plate numbers, e.g. 1,3-4") from None
 
 
 def _parse_merge(text: str) -> dict[int, int]:
@@ -64,6 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
     conv.add_argument("--keep-design", action="store_true",
                       help="with --process: still apply the designer's layer height, walls, infill, "
                            "supports and so on over your profile")
+    conv.add_argument("--plates", type=_parse_plates, metavar="1,3-4",
+                      help="convert only these plates, renumbered from 1 (default: all of them)")
+    conv.add_argument("--split", action="store_true",
+                      help="save each plate as its own file, '... - plate 2.3mf'")
     conv.add_argument("-t", "--test-slice", action="store_true",
                       help="slice the result to check it works (Flash Studio, or OrcaSlicer without it)")
     conv.add_argument("--profiles", type=Path, help="folder holding <Vendor>/machine, process, filament")
@@ -122,6 +134,9 @@ def _inspect(path: Path, target, lib) -> int:
     total = sum(f.usage for f in plan.filaments) or 1
     word = target.slot_word.lower()
     print(f"{path.name}: {len(plan.filaments)} colours, {target.label} has {target.toolheads}")
+    names = plate_names(path)
+    if len(names) > 1:
+        print(f"  {len(names)} plates: " + ", ".join(names))
     for f, t in zip(plan.filaments, plan.merge, strict=True):
         use = f"{100 * f.usage / total:3.0f}%" if f.used else "unused"
         print(f"  colour {f.index} {f.colour} {use:>6}  {f.name} ({f.type}) -> {word} {t}")
@@ -133,12 +148,21 @@ def _inspect(path: Path, target, lib) -> int:
 
 def _output_for(source: Path, args, target) -> Path:
     if args.output and args.output.suffix.lower() == ".3mf":
-        output = args.output
-    elif args.output:
-        output = args.output / default_output(source, target).name
+        return args.output
+    if args.output:
+        return args.output / default_output(source, target).name
+    return default_output(source, target)
+
+
+def _jobs(source: Path, args, target) -> list[tuple[list[int] | None, Path]]:
+    """(plates, output) for each file to write from source"""
+    output = _output_for(source, args, target)
+    if args.split:
+        numbers = args.plates or range(1, len(plate_names(source)) + 1)
+        jobs = [([n], plate_output(output, n)) for n in numbers]
     else:
-        output = default_output(source, target)
-    return output if args.overwrite else unique_output(output)
+        jobs = [(args.plates, output)]
+    return [(plates, out if args.overwrite else unique_output(out)) for plates, out in jobs]
 
 
 def _convert(args, target, lib) -> int:
@@ -161,28 +185,34 @@ def _convert(args, target, lib) -> int:
 
     failures = 0
     for source in args.files:
-        output = _output_for(source, args, target)
         try:
+            jobs = _jobs(source, args, target)
             plan = analyse(source, target, lib)
             merge = None
             if args.merge:
                 merge = [args.merge.get(f.index, t) for f, t in zip(plan.filaments, plan.merge, strict=True)]
-            report = convert(source, output, target, lib, dict(args.filament), merge=merge, plan=plan,
-                             colours=dict(args.colour), process=args.process,
-                             keep_design=args.keep_design)
         except ConversionError as exc:
             failures += 1
             _err(f"{source.name}: {exc}")
             continue
-        except Exception as exc:  # one bad file mustn't stop the rest of a batch
-            failures += 1
-            _err(f"{source.name}: unexpected problem ({type(exc).__name__}: {exc}). Please report this.")
-            continue
-        print("\n".join(report.lines()))
-        if tester:
-            result = test_slice(tester, output)
-            print(f"  {result.line()}")
-            failures += not result.ok
+        for plates, output in jobs:
+            try:
+                report = convert(source, output, target, lib, dict(args.filament), merge=merge, plan=plan,
+                                 colours=dict(args.colour), process=args.process,
+                                 keep_design=args.keep_design, plates=plates)
+            except ConversionError as exc:
+                failures += 1
+                _err(f"{source.name}: {exc}")
+                break  # the same problem would stop every plate
+            except Exception as exc:  # one bad file mustn't stop the rest of a batch
+                failures += 1
+                _err(f"{source.name}: unexpected problem ({type(exc).__name__}: {exc}). Please report this.")
+                break
+            print("\n".join(report.lines()))
+            if tester:
+                result = test_slice(tester, output)
+                print(f"  {result.line()}")
+                failures += not result.ok
     return 1 if failures else 0
 
 
