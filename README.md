@@ -61,6 +61,19 @@ back to the exe.
 
 ## Linux
 
+Download `PlateShift-x86_64.AppImage` from the
+[latest release](https://github.com/viceroy172/PlateShift/releases/latest), make it
+executable and run it:
+
+```
+chmod +x PlateShift-x86_64.AppImage
+./PlateShift-x86_64.AppImage                       # the window
+./PlateShift-x86_64.AppImage convert "Model.3mf"   # or the command line
+```
+
+Some distros need FUSE 2 for AppImages (`sudo apt install libfuse2` on Ubuntu 22.04,
+`libfuse2t64` on 24.04). Or run it from source:
+
 ```
 sudo apt install python3 python3-tk        # Debian/Ubuntu; use your distro's equivalent
 git clone https://github.com/viceroy172/PlateShift
@@ -173,6 +186,12 @@ reads your slicer's filament profiles; a price changed in PlateShift doesn't cha
 profile (the slicer may show that filament as modified in the converted project). The
 currency comes from your computer's regional settings and can be changed in the same
 window.
+
+**Options…** can put PlateShift in the *Open with* list for 3MF files (right-click a
+file in Explorer or your file manager; your default app for 3MF files doesn't change;
+on a Mac it's in Finder's Open With already), and can watch your Downloads folder
+while PlateShift is open: when a 3MF file finishes downloading, from MakerWorld for
+example, PlateShift comes forward with it ready to convert.
 
 When a run ends, a small **results window** sums up each file: print time, filament
 weight and cost, or what went wrong, with any warnings. **Report a problem…** there (and

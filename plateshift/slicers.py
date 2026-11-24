@@ -244,8 +244,31 @@ def open_in(slicer: Slicer, file: Path) -> None:
     else:
         extra["start_new_session"] = True
     subprocess.Popen(slicer.command(str(Path(file).resolve())), cwd=str(Path(file).parent),
-                     creationflags=flags, close_fds=True, **extra,
+                     creationflags=flags, close_fds=True, env=outside_env(), **extra,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+# set by the AppImage runtime around PlateShift; another AppImage (OrcaSlicer) that
+# inherits them looks for its own files in PlateShift's place
+_APPIMAGE_VARS = ("APPDIR", "APPIMAGE", "ARGV0", "OWD")
+
+
+def outside_env() -> dict[str, str] | None:
+    """the environment for programs PlateShift starts: as it was before the bundled
+    app changed it (pyinstaller points the library paths at its own copies). None:
+    nothing to undo"""
+    if not getattr(sys, "frozen", False) or sys.platform == "win32":
+        return None
+    env = dict(os.environ)
+    for name in _APPIMAGE_VARS:
+        env.pop(name, None)
+    for name in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
+        original = env.pop(f"{name}_ORIG", None)
+        if original is not None:
+            env[name] = original
+        else:
+            env.pop(name, None)
+    return env
 
 
 def show_in_folder(file: Path) -> bool:
@@ -256,7 +279,7 @@ def show_in_folder(file: Path) -> bool:
         elif sys.platform == "darwin":
             subprocess.Popen(["open", "-R", str(file)])
         else:
-            subprocess.Popen(["xdg-open", str(file.parent)], start_new_session=True,
+            subprocess.Popen(["xdg-open", str(file.parent)], start_new_session=True, env=outside_env(),
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:
         return False  # no file manager helper (e.g. a minimal linux install)

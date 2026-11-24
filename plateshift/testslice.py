@@ -10,6 +10,8 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .slicers import outside_env
+
 
 @dataclass
 class SliceResult:
@@ -63,7 +65,7 @@ def _run(slicer, project: Path, timeout: int) -> SliceResult:
             # cwd: the slicer drops a log file wherever it's started
             proc = subprocess.run(command("--slice", "0", "--outputdir", out, str(Path(project).resolve())),
                                   capture_output=True, text=True, errors="replace",
-                                  timeout=timeout, creationflags=flags, cwd=out)
+                                  timeout=timeout, creationflags=flags, cwd=out, env=outside_env())
         except subprocess.TimeoutExpired:
             return SliceResult(False, error=f"gave up after {timeout // 60} minutes")
         except OSError as exc:

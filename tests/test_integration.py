@@ -62,6 +62,17 @@ class LaunchTests(unittest.TestCase):
             self.assertTrue(command[0].endswith("plateshift.sh"))
 
 
+class OutsideEnvTests(unittest.TestCase):
+    def test_bundled_app_hands_slicers_the_original_environment(self):
+        from plateshift import slicers
+        self.assertIsNone(slicers.outside_env())  # run from source: nothing to undo
+        env = {"APPDIR": "/tmp/.mount_PlateS", "APPIMAGE": "/home/a/PlateShift.AppImage", "HOME": "/home/a",
+               "LD_LIBRARY_PATH": "/tmp/_MEI123", "LD_LIBRARY_PATH_ORIG": "/opt/lib"}
+        with mock.patch.object(slicers.sys, "frozen", True, create=True),                 mock.patch.object(slicers.sys, "platform", "linux"), mock.patch.dict(os.environ, env, clear=True):
+            clean = slicers.outside_env()
+        self.assertEqual(clean, {"HOME": "/home/a", "LD_LIBRARY_PATH": "/opt/lib"})
+
+
 @unittest.skipIf(sys.platform == "win32" or sys.platform == "darwin", "desktop entries are for linux")
 class DesktopEntryTests(unittest.TestCase):
     def test_add_and_remove(self):
