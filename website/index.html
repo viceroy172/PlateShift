@@ -202,6 +202,9 @@
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
     <symbol id="i-badge" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
     <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12h8"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17.5v.01"/></symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
     <symbol id="i-laptop" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="10" rx="1.5"/><path d="M3 19h18l-2-4H5z"/></symbol>
     <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/></symbol>
@@ -254,16 +257,22 @@
     <div class="grid">
       <div class="card"><div class="icon"><svg class="i"><use href="#i-palette"/></svg></div><h3>Keeps the colours</h3>
         <p>Painted colours move to your toolheads or CFS slots. Too many colours? Similar ones are merged for you, and you can change any of it.</p></div>
-      <div class="card"><div class="icon"><svg class="i"><use href="#i-spool"/></svg></div><h3>Your filaments</h3>
-        <p>Picks the closest filament preset for every colour, or use your own presets from Flash Studio, OrcaSlicer or Creality Print.</p></div>
+      <div class="card"><div class="icon"><svg class="i"><use href="#i-spool"/></svg></div><h3>The right filament</h3>
+        <p>Matches each colour to a real filament preset, not just a material type, so Silk PLA stays Silk PLA. Or pick your own presets.</p></div>
       <div class="card"><div class="icon"><svg class="i"><use href="#i-sliders"/></svg></div><h3>Your print profile</h3>
-        <p>Automatic, or your own print profile. Keep the designer's walls, infill and supports, or use yours.</p></div>
+        <p>Keeps the designer's walls, infill and supports, while speeds and accelerations come from your printer's own profile. Or use your own profile.</p></div>
+      <div class="card"><div class="icon"><svg class="i"><use href="#i-refresh"/></svg></div><h3>Always-current profiles</h3>
+        <p>No built-in copies to go out of date: PlateShift uses the profiles your slicer installed, including your own tweaks, so slicer updates reach it too.</p></div>
       <div class="card"><div class="icon"><svg class="i"><use href="#i-bed"/></svg></div><h3>Fits your bed</h3>
         <p>Objects and prime towers are moved to suit a different bed size, with a warning if anything won't fit.</p></div>
-      <div class="card"><div class="icon"><svg class="i"><use href="#i-badge"/></svg></div><h3>Test slice</h3>
-        <p>Optionally slices the result in the background to prove it works, and reports the print time and filament weight.</p></div>
+      <div class="card"><div class="icon"><svg class="i"><use href="#i-alert"/></svg></div><h3>Catches problems early</h3>
+        <p>Warns before you slice, for example when two filaments need different nozzle temperatures on a one-nozzle printer.</p></div>
+      <div class="card"><div class="icon"><svg class="i"><use href="#i-badge"/></svg></div><h3>Test slice and cost</h3>
+        <p>Optionally slices the result in the background to prove it works, and reports the print time, filament weight and what the print costs.</p></div>
+      <div class="card"><div class="icon"><svg class="i"><use href="#i-plus"/></svg></div><h3>Add your printer</h3>
+        <p>Not in the list? Add printer… lets you pick any printer your slicers have profiles for.</p></div>
       <div class="card"><div class="icon"><svg class="i"><use href="#i-terminal"/></svg></div><h3>Batch &amp; command line</h3>
-        <p>Convert a whole folder at once, or script it from the command line.</p></div>
+        <p>Convert a whole folder at once, open 3MFs straight from your Downloads, or script it from the command line.</p></div>
     </div>
   </div>
 </section>
@@ -275,15 +284,17 @@
       <h2>Nothing ever leaves your computer</h2>
       <p class="sub" style="margin-bottom:0">PlateShift is a small program that runs entirely on your own PC or Mac. It reads the printer
         profiles your slicer already installed and rewrites the project file locally. It never connects to the internet,
-        never asks you to sign in and never sends your files anywhere.</p>
+        never asks you to sign in and never sends your files to anyone.</p>
     </div>
     <div class="shield">
       <ul>
         <li><svg class="i"><use href="#i-check"/></svg><span>Works fully offline: unplug the network and it still works</span></li>
-        <li><svg class="i"><use href="#i-check"/></svg><span>No account, no tracking, no telemetry</span></li>
+        <li><svg class="i"><use href="#i-check"/></svg><span>No account, no analytics, no telemetry: not even an update check</span></li>
+        <li><svg class="i"><use href="#i-check"/></svg><span>Never changes behind your back: a new version arrives only when you download one</span></li>
+        <li><svg class="i"><use href="#i-check"/></svg><span>No ads, no affiliate links, no upsell</span></li>
         <li><svg class="i"><use href="#i-check"/></svg><span>Your original file is never changed</span></li>
         <li><svg class="i"><use href="#i-check"/></svg><span>Your printer's IP address and access keys are never copied into projects</span></li>
-        <li><svg class="i"><use href="#i-check"/></svg><span>Open source, so anyone can check exactly what it does</span></li>
+        <li><svg class="i"><use href="#i-check"/></svg><span>Open source (AGPL): read every line, build it yourself, improve it</span></li>
       </ul>
     </div>
   </div>
@@ -347,7 +358,7 @@
       <details><summary>Does it keep the colours of multicolour models?</summary><p>Yes. Painted colours move to your printer's toolheads (Creator 5) or slots (AD5X, Creality CFS). If a project has more colours than your printer, similar ones are merged for you, and you can change any of it.</p></details>
       <details><summary>Which printers does PlateShift support?</summary><p>Flashforge Creator 5 Pro, Creator 5, AD5X, Adventurer 5M and 5M Pro, and the Creality K1, K1C, K1 SE, K1 Max (with or without the CFS), K2, K2 Plus, K2 Pro, K2 SE and SparkX i7 and i8.</p></details>
       <details><summary>Do I need anything else installed?</summary><p>A slicer that has your printer's profiles: Flash Studio or OrcaSlicer for Flashforge, OrcaSlicer or Creality Print for Creality. PlateShift reads the profiles your slicer already installed.</p></details>
-      <details><summary>Is it free? Does it upload my files?</summary><p>It's free and open source (GNU AGPL). It never connects to the internet: everything happens on your own computer, and your original file is never changed.</p></details>
+      <details><summary>Is it free? Does it upload my files?</summary><p>It's free and open source (GNU AGPL), with no ads. It never connects to the internet: no uploads, no analytics, no automatic updates. Everything happens on your own computer, and your original file is never changed.</p></details>
       <details><summary>Does it work on Mac and Linux?</summary><p>Yes. There's a Windows program, a Mac app and a Linux AppImage to download. On Linux it can also run from source with Python.</p></details>
     </div>
   </div>

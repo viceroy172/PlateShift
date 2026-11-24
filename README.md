@@ -7,6 +7,27 @@ file locally.
 
 **Website and downloads: [cleland.co.za/PlateShift](https://cleland.co.za/PlateShift/)**
 
+## Why PlateShift
+
+- **Truly offline.** No uploads, no account, no analytics, no telemetry, not even an
+  update check. Unplug the network and it works the same.
+- **Never changes behind your back.** The version you run is the version you downloaded;
+  a new one arrives only when you choose to download it.
+- **Open source (AGPL), no ads.** Read every line, build it yourself, improve it. No ads,
+  affiliate links or upsell.
+- **Always-current profiles.** It uses the printer, print and filament profiles your
+  slicer installed, including your own presets, rather than built-in copies that go
+  out of date.
+- **The right filament, not just the right material.** Each colour is matched to a real
+  preset by name (Silk PLA stays Silk PLA), and it warns when two filaments need
+  different nozzle temperatures on a one-nozzle printer.
+- **The designer's model, your printer's limits.** Walls, infill, supports and layer
+  height carry over; speeds and accelerations come from your printer's own profile.
+- **Checked before you print.** An optional test slice proves the result slices and
+  reports print time, filament weight and cost.
+- **Many printers.** Flashforge and Creality out of the box, and **Add printer…** for
+  anything else your slicers have profiles for.
+
 | Pick a printer | Choose toolheads and filaments | Converted |
 |---|---|---|
 | ![PlateShift window ready to convert](screenshots/main_screen.png) | ![Colours of a project mapped to toolheads and presets](screenshots/file_selected.png) | ![A finished conversion with its report](screenshots/done_results.png) |
@@ -197,24 +218,6 @@ When a run ends, a small **results window** sums up each file: print time, filam
 weight and cost, or what went wrong, with any warnings. **Report a problem…** there (and
 in About) makes a zip of the last run's project files, the log and version details,
 then opens a new GitHub issue for you to attach it to. Nothing is sent by itself.
-
-**Send to printer…** (in the results window, after converting one file for a
-Flashforge or Creality printer) sends the print straight to the printer on your
-network. It uses the test slice's G-code, or slices the project first, and for a
-project with several plates you pick the plate. It only uploads the file unless you
-tick **Start printing now**, so check the bed is clear and the right filament is
-loaded before you do.
-
-- **Flashforge** (Creator 5, AD5X, Adventurer 5M): give the printer's IP address,
-  serial number and check code (on its screen: the serial number under About, the
-  check code where LAN mode is switched on). Each filament goes to the slot or
-  toolhead with the same number, and PlateShift warns when a slot holds a different
-  material.
-- **Creality** on stock firmware (K1 family, K2, SparkX): just the printer's IP
-  address. No Helper Script or root access is needed.
-
-Addresses and check codes are remembered on this computer only, and are left out of
-problem reports.
 
 **Then open in** opens a single converted file in a slicer that has the printer's
 profiles: Flash Studio or OrcaSlicer for the Flashforge printers, Creality Print or
