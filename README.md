@@ -228,7 +228,8 @@ loaded before you do.
 
 - **Flashforge** (Creator 5, AD5X, Adventurer 5M): give the printer's IP address,
   serial number and check code (on its screen: the serial number under About, the
-  check code where LAN mode is switched on). Each filament goes to the slot or
+  check code where LAN mode is switched on). If Flash Studio has connected to the
+  printer, PlateShift fills in the serial number and check code from it. Each filament goes to the slot or
   toolhead with the same number, and PlateShift warns when a slot holds a different
   material.
 - **Creality** on stock firmware (K1 family, K2, SparkX): just the printer's IP

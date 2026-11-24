@@ -145,6 +145,23 @@ class SendTests(unittest.TestCase):
         with self.assertRaisesRegex(sendprint.SendError, "Couldn't reach the printer"):
             sendprint.flashforge_detail(sendprint.Connection("flashforge", "127.0.0.1", "a", "b"))
 
+    def test_flash_studio_printers(self):
+        folder = self.tmp / "Orca-Flashforge"
+        folder.mkdir()
+        (folder / "Orca-Flashforge.conf").write_text(json.dumps({
+            "header": "Flash Studio 1.7.23",
+            "local_machines": {"SN1": {"dev_ip": "", "dev_name": "Creator 5 Pro"},
+                               "SN2": {"dev_ip": "10.0.0.9", "dev_name": "AD5X"}},
+            "user_access_code": {"SN1": "abcd1234", "SN2": "wxyz9876"}}, indent=1)
+            + "\n# MD5 checksum 7BAFF0761D45DA218836AE5186734A76\n")
+        printers = sendprint.flash_studio_printers([self.tmp])
+        self.assertEqual(len(printers), 2)
+        c5p = sendprint.flash_studio_match("Flashforge Creator 5 Pro", printers)
+        self.assertEqual((c5p["serial"], c5p["check_code"], c5p["host"]), ("SN1", "abcd1234", ""))
+        self.assertEqual(sendprint.flash_studio_match("Flashforge AD5X", printers)["host"], "10.0.0.9")
+        self.assertIsNone(sendprint.flash_studio_match("Flashforge Adventurer 5M", printers))
+        self.assertEqual(sendprint.flash_studio_printers([self.tmp / "none"]), [])
+
     def test_names_and_brands(self):
         self.assertEqual(sendprint.safe_name("a<b>:c?.gcode"), "a_b__c_.gcode")
         self.assertEqual(sendprint.kind_for("Flashforge"), "flashforge")

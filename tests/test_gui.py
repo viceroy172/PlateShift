@@ -462,6 +462,22 @@ class WindowTests(unittest.TestCase):
         app.send_dialog({"output": self.tmp / "Robot - K1.3mf", "target": target, "gcode": [gcode]})
         self.assertEqual(app.send_vars["host"].get(), "192.168.1.50")
 
+    def test_send_window_fills_in_from_flash_studio(self):
+        app = self.app
+        target = Target("ffc5p", "Flashforge Creator 5 Pro", "Flashforge", MACHINE, "0.20mm Standard @T", 4, "C5P")
+        real = self.gui.sendprint.flash_studio_printers
+        self.gui.sendprint.flash_studio_printers = lambda: [
+            {"serial": "SN1", "check_code": "abcd1234", "name": "Creator 5 Pro", "host": ""}]
+        self.addCleanup(setattr, self.gui.sendprint, "flash_studio_printers", real)
+        app.send_dialog({"output": self.tmp / "Robot - C5P.3mf", "target": target, "gcode": []})
+        v = app.send_vars
+        self.assertEqual((v["serial"].get(), v["check"].get(), v["host"].get()), ("SN1", "abcd1234", ""))
+        # what you saved yourself wins
+        app.settings["printer_hosts"] = {"ffc5p": {"host": "10.0.0.5", "serial": "MINE", "check_code": "mine1234"}}
+        app.send_dialog({"output": self.tmp / "Robot - C5P.3mf", "target": target, "gcode": []})
+        v = app.send_vars
+        self.assertEqual((v["serial"].get(), v["host"].get()), ("MINE", "10.0.0.5"))
+
     def test_result_lines(self):
         from plateshift.testslice import SliceResult
         lines = self.gui.App.result_lines

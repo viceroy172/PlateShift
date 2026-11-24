@@ -989,7 +989,16 @@ class App:
         box.pack(fill="both", expand=True)
         ttk.Label(box, text=f"{output.name} → {target.label}", font=ui_font(10, "bold")).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
-        saved = self.settings.get("printer_hosts", {}).get(target.key, {})
+        saved = dict(self.settings.get("printer_hosts", {}).get(target.key, {}))
+        from_flash_studio = False
+        if kind == "flashforge" and not (saved.get("serial") and saved.get("check_code")):
+            # flash studio already knows the printer: its serial and check code, and maybe its address
+            known = sendprint.flash_studio_match(target.label, sendprint.flash_studio_printers())
+            if known:
+                saved.setdefault("host", known["host"])
+                saved["host"] = saved["host"] or known["host"]
+                saved["serial"], saved["check_code"] = known["serial"], known["check_code"]
+                from_flash_studio = True
         host = tk.StringVar(value=saved.get("host", ""))
         serial = tk.StringVar(value=saved.get("serial", ""))
         check = tk.StringVar(value=saved.get("check_code", ""))
@@ -1008,8 +1017,9 @@ class App:
             ttk.Entry(box, textvariable=check, width=24).grid(row=row, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
             row += 1
             ttk.Label(box, foreground=MUTED, wraplength=320, justify="left",
-                      text="Both are on the printer's screen: the serial number under About, the check code "
-                           "where LAN mode is switched on.").grid(row=row, column=1, sticky="w", padx=(8, 0))
+                      text=("Filled in from Flash Studio, which has connected to this printer." if from_flash_studio
+                            else "Both are on the printer's screen: the serial number under About, the check code "
+                                 "where LAN mode is switched on.")).grid(row=row, column=1, sticky="w", padx=(8, 0))
         gcode = list(item.get("gcode") or [])
         plate = tk.StringVar(value="1")
         if len(gcode) > 1:

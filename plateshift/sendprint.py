@@ -349,3 +349,35 @@ def gcode_filaments(gcode: Path) -> tuple[list[str], list[str]]:
         if not materials and (m := re.search(r"^; filament_type = (.+)$", text, re.MULTILINE)):
             materials = [c.strip() for c in m.group(1).split(";") if c.strip()]
     return colours, materials
+
+
+# --- what flash studio already knows -------------------------------------------
+
+def flash_studio_printers(config_dirs: list[Path] | None = None) -> list[dict]:
+    """the flashforge printers flash studio has connected to: serial, check code,
+    name and address (often empty), read from its settings file on this computer"""
+    from .profiles import _config_dirs
+    found = []
+    for base in config_dirs if config_dirs is not None else _config_dirs():
+        path = Path(base) / "Orca-Flashforge" / "Orca-Flashforge.conf"
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            conf, _ = json.JSONDecoder().raw_decode(text[text.index("{"):])  # an md5 line follows the json
+        except (OSError, ValueError):
+            continue
+        machines = conf.get("local_machines") or {}
+        codes = conf.get("user_access_code") or {}
+        for serial, code in codes.items():
+            info = machines.get(serial) if isinstance(machines.get(serial), dict) else {}
+            found.append({"serial": serial, "check_code": str(code), "name": str(info.get("dev_name") or ""),
+                          "host": str(info.get("dev_ip") or "")})
+    return found
+
+
+def flash_studio_match(label: str, printers: list[dict]) -> dict | None:
+    """the saved printer for a target, by name ("Creator 5 Pro" in "Flashforge Creator 5 Pro");
+    the only one when there's just one"""
+    named = [p for p in printers if p["name"] and p["name"].lower() in label.lower()]
+    if len(named) == 1:
+        return named[0]
+    return printers[0] if len(printers) == 1 else None
