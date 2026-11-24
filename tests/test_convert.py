@@ -17,7 +17,7 @@ from make_project import bambu_settings, write_project  # noqa: E402
 from plateshift import paint  # noqa: E402
 from plateshift.convert import (ConversionError, _clear_prime_towers, _depth_for_height,  # noqa: E402
                                 _drop_gcode_rels, _filament_lists, _overlaps, _plate_centre, _plate_columns,
-                                _tower_size, analyse, process_choices,
+                                _tower_size, analyse, choose_filament, process_choices,
                                 convert, unique_output)
 from plateshift.printers import BY_KEY, Target  # noqa: E402
 from plateshift.profiles import ProfileLibrary, locate  # noqa: E402
@@ -703,6 +703,23 @@ class InstalledProfilesTest(unittest.TestCase):
         self.assertIn("Silk", s["filament_settings_id"][1])
         self.assertEqual(s["filament_type"][2], "PETG")
         self.assertIn("C5", report.process)
+
+
+class ChooseFilamentTests(unittest.TestCase):
+    PRESETS = [{"name": f"Flashforge {n} @FF AD5X", "filament_type": ["PLA"], "_explicit": True}
+               for n in ("PLA Basic", "PLA LW", "PLA Silk", "PLA Matte")]
+
+    def pick(self, source):
+        return choose_filament(self.PRESETS, source, "PLA")[0]["name"]
+
+    def test_plain_pla_gets_basic_not_a_shorter_variant(self):
+        # "PLA LW" (foaming lightweight PLA) used to win the tie on name length
+        self.assertEqual(self.pick("Generic PLA @BBL X1C"), "Flashforge PLA Basic @FF AD5X")
+        self.assertEqual(self.pick("Bambu PLA Basic @BBL X1C"), "Flashforge PLA Basic @FF AD5X")
+
+    def test_named_variants_still_win(self):
+        self.assertEqual(self.pick("Bambu PLA Silk @BBL X1C"), "Flashforge PLA Silk @FF AD5X")
+        self.assertEqual(self.pick("Bambu PLA Matte @BBL X1C"), "Flashforge PLA Matte @FF AD5X")
 
 
 if __name__ == "__main__":

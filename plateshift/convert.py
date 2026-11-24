@@ -89,6 +89,8 @@ KEEP_IF_SAME_NOZZLE = (
 _BRAND_WORDS = {"bambu", "lab", "bbl", "generic", "flashforge", "ff", "sunlu", "polymaker",
                 "esun", "elegoo", "creality", "overture", "jayo", "kingroon", "cr"}
 
+_PLAIN_WORDS = {"basic"}  # preset-name words that mean "the ordinary one"
+
 PLATE_GAP = 1 / 5  # space between plates, fraction of bed size
 STANDARD_VARIANT = "Direct Drive Standard"
 PER_PLATE = frozenset({"wipe_tower_x", "wipe_tower_y"})
@@ -354,7 +356,9 @@ def choose_filament(candidates: list[dict], source_name: str, source_type: str) 
 
     def score(p):
         have = _tokens(p["name"])
-        return (len(want & have) - 0.1 * len(have - want)
+        # "Basic" names the plain preset, not a variant: unlike LW, Silk or CF it costs
+        # nothing, so plain PLA beats "PLA LW" instead of losing on name length
+        return (len(want & have) - 0.1 * len(have - want - _PLAIN_WORDS)
                 + (0.5 if ftype(p) == wanted else 0.0)
                 + (0.3 if p["name"].lower().startswith("generic") else 0.0)
                 # tuned for this printer beats the brand's printer-neutral version
