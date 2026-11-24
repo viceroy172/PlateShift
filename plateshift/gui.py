@@ -15,7 +15,7 @@ import webbrowser
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from . import REPO_URL, __version__, dnd
+from . import REPO_URL, __version__, dnd, typeahead
 from .icon_data import ICONS
 from .preview import plate_pictures
 from .convert import (ConversionError, _family, analyse, convert, default_output, lead_colour, process_choices,
@@ -168,9 +168,11 @@ class App:
         self.brand = tk.StringVar()
         self.brand_picker = ttk.Combobox(pickers, textvariable=self.brand, state="readonly", width=12)
         self.brand_picker.pack(side="left")
+        typeahead.attach(self.brand_picker)
         self.model = tk.StringVar()
         self.picker = ttk.Combobox(pickers, textvariable=self.model, state="readonly", width=30)
         self.picker.pack(side="left", padx=(6, 0))
+        typeahead.attach(self.picker)
         self._syncing = False
         self.show_printer()
         self.brand.trace_add("write", lambda *_: self.brand_changed())
@@ -182,6 +184,7 @@ class App:
         self.open_choice = tk.StringVar(value=DONT_OPEN)
         self.opener = ttk.Combobox(top, textvariable=self.open_choice, state="readonly", width=34)
         self.opener.grid(row=1, column=1, sticky="w", padx=8, pady=(8, 0))
+        typeahead.attach(self.opener)
         self._quiet = True
         self.update_slicer_choices()
         self._quiet = False
@@ -194,6 +197,7 @@ class App:
         self.process_picker = ttk.Combobox(top, textvariable=self.process_choice, state="readonly",
                                            width=48, values=[AUTO_PROCESS])
         self.process_picker.grid(row=2, column=1, sticky="w", padx=8, pady=(8, 0))
+        typeahead.attach(self.process_picker)
         self.keep_design = tk.BooleanVar(value=bool(self.settings.get("keep_design", False)))
         self.keeper = ttk.Checkbutton(top, variable=self.keep_design,
                                       text="Keep the designer's layer height, walls, infill, supports…")
@@ -443,6 +447,7 @@ class App:
             var = tk.StringVar(value=str(t))
             combo = ttk.Combobox(left, textvariable=var, values=heads, width=4, state="readonly")
             combo.grid(row=row, column=3, padx=(8, 0))
+            typeahead.attach(combo)
             if target.toolheads == 1:
                 combo.configure(state="disabled")
             var.trace_add("write", lambda *_: self.refresh_heads())
@@ -566,8 +571,10 @@ class App:
                 self._quiet = True
                 var.set(by_name.get(name, ""))
                 self._quiet = False
-            ttk.Combobox(self.heads_frame, textvariable=var, values=list(self.preset_names),
-                         width=30, state="readonly").grid(row=row, column=2, sticky="we", padx=(8, 0), pady=1)
+            presets = ttk.Combobox(self.heads_frame, textvariable=var, values=list(self.preset_names),
+                                   width=30, state="readonly")
+            presets.grid(row=row, column=2, sticky="we", padx=(8, 0), pady=1)
+            typeahead.attach(presets)
             if t in self.head_usual and t not in self.head_user_set:
                 ttk.Label(self.heads_frame, text="your usual", foreground=MUTED).grid(
                     row=row, column=3, sticky="w", padx=(6, 0))
