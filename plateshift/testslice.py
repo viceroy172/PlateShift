@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,7 @@ class SliceResult:
     seconds: int = 0
     grams: float = 0.0
     error: str = ""
+    gcode: list = field(default_factory=list)   # the g-code files kept, one per plate
     grams_each: list[float] = field(default_factory=list)   # per filament, all plates together
 
     def line(self) -> str:
@@ -43,15 +45,16 @@ def _seconds(text: str) -> int:
     return total
 
 
-def run(slicer, project: Path, timeout: int = 900) -> SliceResult:
-    """slicer: a slicers.Slicer, or the path of a slicer's program. never raises"""
+def run(slicer, project: Path, timeout: int = 900, keep: Path | None = None) -> SliceResult:
+    """slicer: a slicers.Slicer, or the path of a slicer's program. keep: a folder to
+    keep the g-code in (plate_1.gcode…), for sending to a printer. never raises"""
     try:
-        return _run(slicer, project, timeout)
+        return _run(slicer, project, timeout, keep)
     except Exception as exc:
         return SliceResult(False, error=f"{type(exc).__name__}: {exc}")
 
 
-def _run(slicer, project: Path, timeout: int) -> SliceResult:
+def _run(slicer, project: Path, timeout: int, keep: Path | None = None) -> SliceResult:
     command = slicer.command if hasattr(slicer, "command") else (lambda *a: [str(slicer), *a])
     # flatpak apps can't see the system /tmp, so on linux work under ~/.cache
     base = None
@@ -77,6 +80,13 @@ def _run(slicer, project: Path, timeout: int) -> SliceResult:
             reason = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
             return SliceResult(False, error=_why(reason + "\n" + proc.stdout + proc.stderr))
         result = SliceResult(True, plates=len(files))
+        if keep is not None:
+            keep = Path(keep)
+            keep.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                target = keep / f.name
+                shutil.copyfile(f, target)
+                result.gcode.append(target)
         for f in files:
             with open(f, encoding="utf-8", errors="replace") as fh:
                 for line in fh:

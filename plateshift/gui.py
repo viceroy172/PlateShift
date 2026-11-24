@@ -9,13 +9,15 @@ import math
 import os
 import queue
 import sys
+import shutil
+import tempfile
 import threading
 import tkinter as tk
 import webbrowser
 from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from . import REPO_URL, __version__, bugreport, catalogue, dnd, integration, typeahead
+from . import REPO_URL, __version__, bugreport, catalogue, dnd, integration, sendprint, typeahead
 from .icon_data import ICONS
 from .preview import plate_pictures
 from .price import cost_lines, filament_total, money, parse_price, regional_currency
@@ -970,6 +972,128 @@ class App:
         self.root.after(300, lambda: self.root.attributes("-topmost", False))
         self.root.focus_force()
 
+    # --- sending to the printer -------------------------------------------
+
+    def send_dialog(self, item: dict):
+        """send a converted file's g-code to the printer, and start it if asked"""
+        target, output = item["target"], Path(item["output"])
+        kind = sendprint.kind_for(target.vendor)
+        old = getattr(self, "send_window", None)
+        if old is not None and old.winfo_exists():
+            old.destroy()
+        win = self.send_window = tk.Toplevel(self.root)
+        win.title("Send to printer")
+        win.resizable(False, False)
+        win.transient(self.root)
+        box = ttk.Frame(win, padding=16)
+        box.pack(fill="both", expand=True)
+        ttk.Label(box, text=f"{output.name} → {target.label}", font=ui_font(10, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        saved = self.settings.get("printer_hosts", {}).get(target.key, {})
+        host = tk.StringVar(value=saved.get("host", ""))
+        serial = tk.StringVar(value=saved.get("serial", ""))
+        check = tk.StringVar(value=saved.get("check_code", ""))
+        row = 1
+        ttk.Label(box, text="Printer address").grid(row=row, column=0, sticky="w")
+        ttk.Entry(box, textvariable=host, width=24).grid(row=row, column=1, sticky="w", padx=(8, 0))
+        row += 1
+        ttk.Label(box, foreground=MUTED, text="Its IP address, on the printer's screen under network settings").grid(
+            row=row, column=1, sticky="w", padx=(8, 0))
+        if kind == "flashforge":
+            row += 1
+            ttk.Label(box, text="Serial number").grid(row=row, column=0, sticky="w", pady=(6, 0))
+            ttk.Entry(box, textvariable=serial, width=24).grid(row=row, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+            row += 1
+            ttk.Label(box, text="Check code").grid(row=row, column=0, sticky="w", pady=(6, 0))
+            ttk.Entry(box, textvariable=check, width=24).grid(row=row, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+            row += 1
+            ttk.Label(box, foreground=MUTED, wraplength=320, justify="left",
+                      text="Both are on the printer's screen: the serial number under About, the check code "
+                           "where LAN mode is switched on.").grid(row=row, column=1, sticky="w", padx=(8, 0))
+        gcode = list(item.get("gcode") or [])
+        plate = tk.StringVar(value="1")
+        if len(gcode) > 1:
+            row += 1
+            ttk.Label(box, text="Plate").grid(row=row, column=0, sticky="w", pady=(6, 0))
+            plates = ttk.Combobox(box, textvariable=plate, values=[str(i) for i in range(1, len(gcode) + 1)],
+                                  state="readonly", width=5)
+            plates.grid(row=row, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        start = tk.BooleanVar(value=False)
+        row += 1
+        ttk.Checkbutton(box, variable=start, text="Start printing now").grid(
+            row=row, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        row += 1
+        ttk.Label(box, foreground=MUTED, wraplength=380, justify="left",
+                  text="Check the bed is clear and the right filament is loaded first. Otherwise the file is "
+                       "only sent, and you start it from the printer's screen.").grid(
+            row=row, column=0, columnspan=2, sticky="w")
+        row += 1
+        status = tk.Label(box, text="", wraplength=380, justify="left", font=ui_font(9),
+                          **({"bg": self.bg} if self.bg else {}))
+        status.grid(row=row, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        buttons = ttk.Frame(box)
+        buttons.grid(row=row + 1, column=0, columnspan=2, sticky="e", pady=(12, 0))
+        send = ttk.Button(buttons, text="Send")
+        send.pack(side="right")
+        ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right", padx=6)
+
+        def say(text: str, colour: str = MUTED):
+            self.later(lambda: status.winfo_exists() and status.configure(text=text, fg=colour))
+
+        def go():
+            address = host.get().strip()
+            if not address:
+                status.configure(text="Type the printer's address first.", fg=FAIL_COLOUR)
+                return
+            entry = {"host": address}
+            if kind == "flashforge":
+                entry.update(serial=serial.get().strip(), check_code=check.get().strip())
+            self.settings.setdefault("printer_hosts", {})[target.key] = entry
+            save_settings(self.settings)
+            conn = sendprint.Connection(kind, address, entry.get("serial", ""), entry.get("check_code", ""))
+            starting = start.get()
+            send.configure(state="disabled")
+            number = int(plate.get() or 1)
+
+            def work():
+                try:
+                    files = gcode
+                    if not files:
+                        slicer = test_slicer(self.slicers, target)
+                        if slicer is None:
+                            raise sendprint.SendError("Sending needs a slicer that can slice from the command line "
+                                                      "(Flash Studio or OrcaSlicer).")
+                        say(f"Slicing in {slicer.label}…")
+                        result = test_slice(slicer, output, keep=Path(tempfile.mkdtemp(prefix="plateshift-gcode-")))
+                        if not result.ok:
+                            raise sendprint.SendError(f"It didn't slice: {result.error}")
+                        files = result.gcode
+                        item["gcode"] = files
+                    chosen = files[min(number, len(files)) - 1]
+                    name = output.stem + (f" - plate {number}" if len(files) > 1 else "") + ".gcode"
+                    upload = Path(tempfile.mkdtemp(prefix="plateshift-send-")) / name
+                    shutil.copyfile(chosen, upload)
+                    colours, materials = sendprint.gcode_filaments(upload)
+                    say("Starting the print…" if starting else "Sending…")
+                    sent = sendprint.send(conn, upload, starting, colours, materials)
+                    text = (f"✓ Printing {sent.file} on {target.label}." if sent.started else
+                            f"✓ Sent {sent.file} to {target.label}. Start it from the printer's screen.")
+                    if sent.notes:
+                        text += "\n⚠ " + "\n⚠ ".join(sent.notes)
+                    say(text, OK_COLOUR if not sent.notes else WARN_COLOUR)
+                    self.write(text.replace("\n", "\n  "))
+                except sendprint.SendError as exc:
+                    say(f"✗ {exc}", FAIL_COLOUR)
+                except Exception as exc:  # anything else: say so, never leave the window stuck
+                    say(f"✗ {_explain(exc)}", FAIL_COLOUR)
+                finally:
+                    self.later(lambda: send.winfo_exists() and send.configure(state="normal"))
+            threading.Thread(target=work, daemon=True).start()
+        send.configure(command=go)
+        win.bind("<Escape>", lambda e: win.destroy())
+        self.send_vars = {"host": host, "serial": serial, "check": check, "start": start, "plate": plate,
+                          "send": go, "status": status}  # for tests
+
     # --- problem reports ---------------------------------------------------
 
     def report_problem(self):
@@ -986,7 +1110,9 @@ class App:
         about = bugreport.details(self.target().label, {s.label: str(s.exe) for s in self.slicers.values()})
         folder = Path(files[0]).parent if files else Path.home()
         try:
-            path = bugreport.make(folder, files, self.log.get("1.0", "end"), about, self.settings)
+            # printer addresses and check codes stay private
+            shared = {k: v for k, v in self.settings.items() if k != "printer_hosts"}
+            path = bugreport.make(folder, files, self.log.get("1.0", "end"), about, shared)
         except OSError as exc:
             messagebox.showerror("Report a problem", f"Couldn't make the zip: {exc}", parent=self.root)
             return
@@ -1360,6 +1486,8 @@ class App:
                             break  # the same problem would stop every plate
                         converted.append(report.output)
                         summary = {"name": report.output.name, "warnings": list(report.warnings)}
+                        summary["output"] = report.output
+                        summary["target"] = target
                         self.results.append(summary)
                         lines = report.lines()
                         self.write(f"✓ {lines[0]}", "ok")
@@ -1368,7 +1496,10 @@ class App:
                         self.later(lambda n=step: self.progress.configure(value=n))
                         if testing:
                             self.set_status(f"Test slicing {output.name} in {self.tester.label}…")
-                            result = test_slice(self.tester, output)
+                            # the g-code is kept, so sending it to the printer needn't slice again
+                            result = test_slice(self.tester, output,
+                                                keep=Path(tempfile.mkdtemp(prefix="plateshift-gcode-")))
+                            summary["gcode"] = list(result.gcode)
                             self.write(f"  {'✓' if result.ok else '✗'} {result.line()}",
                                        "ok" if result.ok else "fail")
                             if not result.ok:
@@ -1459,6 +1590,10 @@ class App:
         buttons.pack(fill="x", pady=(14, 0))
         ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right")
         ttk.Button(buttons, text="Report a problem…", command=self.report_problem).pack(side="left")
+        sendable = [r for r in results if "output" in r and sendprint.kind_for(r["target"].vendor)]
+        if len(sendable) == 1 and len(results) == 1:
+            ttk.Button(buttons, text="Send to printer…",
+                       command=lambda: self.send_dialog(sendable[0])).pack(side="right", padx=(6, 0))
         if self.last_output is not None and any("error" not in r for r in results):
             ttk.Button(buttons, text="Show in folder", command=self.show_in_folder).pack(side="right", padx=6)
         win.bind("<Escape>", lambda e: win.destroy())

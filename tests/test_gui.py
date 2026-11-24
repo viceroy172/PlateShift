@@ -413,7 +413,7 @@ class WindowTests(unittest.TestCase):
         app.tester = type("Fake", (), {"label": "Fake slicer"})()
         app.check.set(True)
         real = self.gui.test_slice
-        self.gui.test_slice = lambda slicer, out: SliceResult(True, 1, 600, 50.0, grams_each=[50.0])
+        self.gui.test_slice = lambda slicer, out, keep=None: SliceResult(True, 1, 600, 50.0, grams_each=[50.0])
         try:
             app.convert_plan()
             self.wait(lambda: not app.busy and app.last_output is not None)
@@ -433,6 +433,34 @@ class WindowTests(unittest.TestCase):
         walk(win)
         self.assertIn("six - Four.3mf", texts)
         self.assertIn("10 min  ·  50 g  ·  $1.00", texts)
+
+    def test_send_to_printer(self):
+        from plateshift import sendprint
+        app = self.app
+        gcode = self.tmp / "plate_1.gcode"
+        gcode.write_text("G28\n; filament_colour = #FF0000\n; filament_type = PLA\n")
+        target = Target("k1", "Creality Test", "Creality", MACHINE, "0.20mm Standard @T", 1, "K1")
+        calls = []
+        real = self.gui.sendprint.send
+        self.gui.sendprint.send = lambda conn, path, start, colours, materials: (
+            calls.append((conn, path.name, start, colours, materials)) or sendprint.Sent(conn.host, path.name, start))
+        self.addCleanup(setattr, self.gui.sendprint, "send", real)
+        app.send_dialog({"output": self.tmp / "Robot - K1.3mf", "target": target, "gcode": [gcode]})
+        v = app.send_vars
+        self.assertFalse(v["start"].get())       # never starts unless asked
+        v["send"]()                              # no address yet
+        self.assertIn("address", str(v["status"].cget("text")))
+        v["host"].set("192.168.1.50")
+        v["send"]()
+        self.wait(lambda: calls and "Sent" in str(v["status"].cget("text")))
+        conn, name, start, colours, materials = calls[0]
+        self.assertEqual((conn.kind, conn.host, name, start), ("creality", "192.168.1.50", "Robot - K1.gcode", False))
+        self.assertEqual((colours, materials), (["#FF0000"], ["PLA"]))
+        saved = json.loads((self.tmp / "settings.json").read_text())
+        self.assertEqual(saved["printer_hosts"]["k1"], {"host": "192.168.1.50"})
+        # and the address is offered next time
+        app.send_dialog({"output": self.tmp / "Robot - K1.3mf", "target": target, "gcode": [gcode]})
+        self.assertEqual(app.send_vars["host"].get(), "192.168.1.50")
 
     def test_result_lines(self):
         from plateshift.testslice import SliceResult
