@@ -18,7 +18,7 @@ from plateshift import paint  # noqa: E402
 from plateshift.convert import (ConversionError, _clear_prime_towers, _depth_for_height,  # noqa: E402
                                 _drop_gcode_rels, _filament_lists, _overlaps, _plate_centre, _plate_columns,
                                 _tower_size, analyse, choose_filament, process_choices,
-                                convert, unique_output)
+                                convert, lead_colour, unique_output)
 from plateshift.printers import BY_KEY, Target  # noqa: E402
 from plateshift.profiles import ProfileLibrary, locate  # noqa: E402
 
@@ -176,6 +176,29 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(sorted(self.painted_states(self.tmp / "pick.3mf")), [1, 2, 3, 4])
         s = json.loads(read(self.tmp / "pick.3mf", "Metadata/project_settings.config"))
         self.assertEqual(s["filament_colour"][3], "#000000")
+
+    def test_colour_changes_by_height_follow_the_merge(self):
+        # one unpainted object on filament 1 that switches to 6 and then 3 partway up,
+        # the way layered bookmarks and signs are coloured
+        colours = ["#000000", "#101010", "#FFFFFF", "#F0F0F0", "#FF0000", "#00AA00"]
+        settings = bambu_settings(filament_type=["PLA"] * 6, filament_colour=colours,
+                                  filament_settings_id=["Bambu PLA Basic @BBL X1C"] * 6)
+        src = write_project(self.tmp / "layers.3mf", settings, [[(128, 128)]])
+        changes = ('<?xml version="1.0" encoding="utf-8"?>\n<custom_gcodes_per_layer>\n<plate>\n'
+                   '<plate_info id="1"/>\n'
+                   '<layer top_z="1.2" type="2" extruder="6" color="#00AA00" extra="" gcode="tool_change"/>\n'
+                   '<layer top_z="2.4" type="2" extruder="3" color="#FFFFFF" extra="" gcode="tool_change"/>\n'
+                   '<mode value="MultiAsSingle"/>\n</plate>\n</custom_gcodes_per_layer>\n')
+        with zipfile.ZipFile(src, "a") as z:
+            z.writestr("Metadata/custom_gcode_per_layer.xml", changes)
+        plan = analyse(src, TARGET, self.lib)
+        self.assertEqual([f.index for f in plan.filaments if f.used], [1, 3, 6])
+        self.assertEqual(len({plan.merge[0], plan.merge[2], plan.merge[5]}), 3, "used colours keep their own")
+        for i in (3, 6):   # a used colour leads its toolhead, not an unused one beside it
+            self.assertEqual(lead_colour(plan, plan.merge, plan.merge[i - 1]), colours[i - 1])
+        convert(src, self.tmp / "layers-out.3mf", TARGET, self.lib)
+        xml = read(self.tmp / "layers-out.3mf", "Metadata/custom_gcode_per_layer.xml")
+        self.assertEqual(re.findall(r'extruder="(\d+)"', xml), [str(plan.merge[5]), str(plan.merge[2])])
 
     def test_single_head_printer_gets_one_filament(self):
         single = Target("s", "Single", "Testvendor", MACHINE, "0.20mm Standard @T", 1, "S")
