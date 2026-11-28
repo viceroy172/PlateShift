@@ -11,6 +11,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import thumbnails
 from .slicers import outside_env
 
 
@@ -86,6 +87,8 @@ def _run(slicer, project: Path, timeout: int, keep: Path | None = None) -> Slice
             for f in files:
                 target = keep / f.name
                 shutil.copyfile(f, target)
+                # the printer's screen shows these; the cli slicers leave them out
+                thumbnails.add(target, project)
                 result.gcode.append(target)
         for f in files:
             with open(f, encoding="utf-8", errors="replace") as fh:
