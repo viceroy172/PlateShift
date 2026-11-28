@@ -24,7 +24,9 @@ MODEL_SETTINGS = "Metadata/model_settings.config"
 MAIN_MODEL = "3D/3dmodel.model"
 MODEL_SETTINGS_RELS = "Metadata/_rels/model_settings.config.rels"
 SLICE_INFO = "Metadata/slice_info.config"
-CUSTOM_GCODE = "Metadata/custom_gcode_per_print_z.xml"
+# colour changes, tool changes and pauses at set heights (orca names it per_layer,
+# prusaslicer per_print_z)
+CUSTOM_GCODE = "Metadata/custom_gcode_per_layer.xml"
 FILAMENT_SEQUENCE = "Metadata/filament_sequence.json"
 CUT_INFO = "Metadata/cut_information.xml"
 GCODE_ENTRY = re.compile(r"^Metadata/plate_\d+\.gcode(\.md5)?$", re.IGNORECASE)
@@ -368,7 +370,7 @@ def choose_filament(candidates: list[dict], source_name: str, source_type: str) 
 
 
 def _lead(group: list[SourceFilament]) -> SourceFilament:
-    return max(group, key=lambda f: (f.usage, -f.index))
+    return max(group, key=lambda f: (f.used, f.usage, -f.index))
 
 
 def _group(plan: Plan, merge: list[int], toolhead: int) -> list[SourceFilament]:
@@ -483,6 +485,9 @@ def _source_filaments(settings: dict) -> list[SourceFilament]:
             for i in range(count)]
 
 
+_LAYER_CHANGE = re.compile(r'<layer\b[^>]*\btype="[02]"[^>]*\bextruder="(\d+)"')
+
+
 def _usage(zin: zipfile.ZipFile, settings: dict) -> dict[int, int]:
     """painted triangles per filament; filaments used some other way count as 0"""
     usage: dict[int, int] = {}
@@ -492,6 +497,10 @@ def _usage(zin: zipfile.ZipFile, settings: dict) -> dict[int, int]:
     if MODEL_SETTINGS in zin.namelist():
         for m in _EXTRUDER_META.finditer(zin.read(MODEL_SETTINGS).decode("utf-8", "replace")):
             usage.setdefault(int(m.group(2)), 0)
+    # filaments switched to at a height, e.g. a bookmark that changes colour by layer
+    if CUSTOM_GCODE in zin.namelist():
+        for m in _LAYER_CHANGE.finditer(zin.read(CUSTOM_GCODE).decode("utf-8", "replace")):
+            usage.setdefault(int(m.group(1)), 0)
     for key in FILAMENT_INDEX_KEYS:
         n = int(_as_float(settings.get(key), 0))
         if n:
