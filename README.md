@@ -113,10 +113,6 @@ the `PLATESHIFT_PROFILES` environment variable.
 an AppImage in `~/Applications`, `~/Downloads`, `~/.local/bin` or `/opt`. Dropping files
 on the window is Windows only; use **Choose 3MF files…** instead.
 
-| Linux: ready | Choose toolheads and filaments | Converted and test sliced in OrcaSlicer |
-|---|---|---|
-| ![PlateShift on Linux, ready to convert](screenshots/linux_main_screen.png) | ![Colours mapped to toolheads on Linux](screenshots/linux_file_selected.png) | ![A finished conversion on Linux](screenshots/linux_done_results.png) |
-
 ## macOS
 
 Download `PlateShift-mac.zip` from the [latest release](https://github.com/viceroy172/PlateShift/releases/latest),
@@ -147,10 +143,6 @@ folder and reads their profiles from `~/Library/Application Support`, or from in
 the app if you haven't added the printer there yet. Drop `.3mf` files on PlateShift's
 Dock icon, or use **Open With → PlateShift** in Finder; dropping onto the window
 itself isn't possible on macOS.
-
-| macOS: ready | Choose toolheads and filaments | Converted and test sliced in OrcaSlicer |
-|---|---|---|
-| ![PlateShift on macOS, ready to convert](screenshots/mac_main_screen.png) | ![Colours mapped to toolheads on macOS](screenshots/mac_file_selected.png) | ![A finished conversion on macOS](screenshots/mac_done_results.png) |
 
 The macOS build is tested automatically against the official OrcaSlicer for Mac, but
 hasn't had much use on real Macs yet; reports are welcome.
@@ -218,6 +210,8 @@ When a run ends, a small **results window** sums up each file: print time, filam
 weight and cost, or what went wrong, with any warnings. **Report a problem…** there (and
 in About) makes a zip of the last run's project files, the log and version details,
 then opens a new GitHub issue for you to attach it to. Nothing is sent by itself.
+
+![The results window after converting, with Send to printer](screenshots/results.png)
 
 **Send to printer…** (in the results window, after converting one file for a
 Flashforge or Creality printer) sends the print straight to the printer on your

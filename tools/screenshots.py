@@ -13,10 +13,13 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
 import tkinter as tk
+import zipfile
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +68,37 @@ $b.Save('OUT')
 '''
 
 
+def _png(width: int, height: int, pixel) -> bytes:
+    rows = b"".join(b"\0" + b"".join(pixel(x, y) for x in range(width)) for y in range(height))
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b""))
+
+
+def _plate_picture(cubes: list[tuple[int, tuple[int, int, int]]]) -> bytes:
+    """a plate seen from above at an angle, as the slicers save it: each cube a lit
+    top and a shaded front, on a clear background"""
+    size, side, depth = 256, 64, 22
+    boxes = []
+    for x, colour in cubes:
+        top = tuple(min(255, c + 25) for c in colour)
+        front = tuple(int(c * 0.78) for c in colour)
+        boxes.append((x, 84, top, front))
+
+    def pixel(px, py):
+        for x, y, top, front in boxes:
+            if x <= px < x + side and y <= py < y + side:
+                return bytes(top) + b"\xff"
+            if x <= px < x + side and y + side <= py < y + side + depth:
+                return bytes(front) + b"\xff"
+        if 8 <= px < size - 8 and 170 <= py < 196:
+            return b"\xd8\xd8\xd8\xff"   # the plate's edge
+        return b"\0\0\0\0"
+    return _png(size, size, pixel)
+
+
 def _windows_path(path: Path) -> str:
     if sys.platform == "win32":
         return str(path)
@@ -87,6 +121,10 @@ def main() -> int:
     src = write_project(work / "Colour cubes.3mf", e2e.bambu_project(args.profiles),
                         [[(70 + 45 * i, 128) for i in range(3)], [(128 + step_x, 128)]], size=20,
                         paint={i: paint.encode(i) for i in range(1, 5)})
+    with zipfile.ZipFile(src, "a") as z:   # the pictures the colour panel shows
+        z.writestr("Metadata/plate_1.png", _plate_picture([(14, (20, 20, 20)), (96, (240, 240, 240)),
+                                                           (178, (255, 128, 0))]))
+        z.writestr("Metadata/plate_2.png", _plate_picture([(96, (0, 170, 0))]))
     settings = work / "settings.json"
     settings.write_text(json.dumps({"printer": "Flashforge Creator 5 Pro", "test_slice": True, "currency": "$",
                                     "open_in_by_printer": {"c5p": "OrcaSlicer"}}))
@@ -103,17 +141,18 @@ def main() -> int:
     root.lift()
     root.attributes("-topmost", True)
 
-    def shoot(name: str):
-        root.update()
+    def shoot(name: str, window=None, title: str = TITLE):
+        window = window or root
+        window.update()
         out = args.out / f"{PREFIX}{name}.png"
         if sys.platform == "darwin":
-            x, y = root.winfo_rootx(), root.winfo_rooty()
-            w, h = root.winfo_width(), root.winfo_height()
+            x, y = window.winfo_rootx(), window.winfo_rooty()
+            w, h = window.winfo_width(), window.winfo_height()
             title = 28  # the macos title bar sits above the tk content
             subprocess.run(["screencapture", "-x", f"-R{x},{y - title},{w},{h + title}", str(out)], check=True)
         else:
             shell = "powershell" if sys.platform == "win32" else shutil.which("powershell.exe") or "powershell.exe"
-            script = _CAPTURE.replace("TITLE", TITLE).replace("OUT", _windows_path(out.resolve()))
+            script = _CAPTURE.replace("TITLE", title).replace("OUT", _windows_path(out.resolve()))
             subprocess.run([shell, "-NoProfile", "-Command", script], check=True)
         print("captured", out.name, flush=True)
 
@@ -141,12 +180,18 @@ def main() -> int:
     step(lambda: shoot("main_screen"))
     step(lambda: app.handle_files([src]))
     step(lambda: None, lambda: getattr(app, "plan", None) is not None and not app.busy)
-    step(lambda: app.merge_vars[3].set("3"))
+    step(lambda: app.merge_vars[3].set("1"))   # the green pla shares the black pla's toolhead
     step(lambda: shoot("file_selected"))
     step(lambda: app.convert_plan())
     step(lambda: None, lambda: not app.busy and app.last_output is not None)
     step(lambda: app.log.see("end"))
+    # the results window pops up over the main one: out of the way for its picture
+    step(lambda: None, lambda: getattr(app, "results_window", None) is not None)
+    step(lambda: app.results_window.withdraw())
     step(lambda: shoot("done_results"))
+    step(lambda: (app.results_window.deiconify(), app.results_window.attributes("-topmost", True),
+                  app.results_window.lift()))
+    step(lambda: shoot("results", app.results_window, "Conversion results"))
     root.after(1500, drive)
     root.mainloop()
     sys.stdout.reconfigure(errors="replace")  # the log has ✓ in it
